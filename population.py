@@ -3,9 +3,10 @@ import numpy as np
 CANDIDATS = {0: "Bob", 1: "Raoul", 2: "jackie", 3: "Mark", 4: "Francis"}
 
 class Electeur:
-    def __init__(self, id_electeur, utilities):
+    def __init__(self, id_electeur, utilities, faction="Inconnue"):
         self.id = id_electeur
         self.utilities = utilities
+        self.faction = faction
 
     def get_favori(self):
         return max(self.utilities, key=self.utilities.get)
@@ -14,19 +15,17 @@ class Electeur:
         return sorted(self.utilities, key=self.utilities.get, reverse=True)
 
     def get_approbations(self, seuil=50):
-        """Retourne la liste des candidats approuvés (Utile pour l'Approval Voting)"""
         return [candidat for candidat, score in self.utilities.items() if score >= seuil]
 
 
 def generer_population(nb_electeurs):
-
     population = []
     
+    noms_factions = ["Pro-Bob", "Pro-Raoul", "Pro-jackie", "Pro-Mark", "Pro-Francis"]
+    probas_factions = [0.35, 0.25, 0.20, 0.12, 0.08]
+    
     for i in range(nb_electeurs):
-        faction = np.random.choice(
-            ["Pro-Bob", "Pro-Raoul", "Pro-jackie", "Pro-Mark", "Pro-Francis"], 
-            p=[0.35, 0.25, 0.20, 0.12, 0.08]
-        )
+        faction = np.random.choice(noms_factions, p=probas_factions)
         
         if faction == "Pro-Bob":
             score_bob     = np.random.normal(85, 10)
@@ -71,14 +70,13 @@ def generer_population(nb_electeurs):
             "Francis": round(np.clip(score_francis, 0, 100), 1)
         }
         
-        electeur = Electeur(id_electeur=i, utilities=utilities)
+        electeur = Electeur(id_electeur=i, utilities=utilities, faction=faction)
         population.append(electeur)
         
     return population
 
 
 def generer_election_aleatoire(nb_electeurs):
-
     noms_candidats = list(CANDIDATS.values()) 
     nb_candidats = len(noms_candidats)
     
@@ -101,30 +99,42 @@ def generer_election_aleatoire(nb_electeurs):
         idx = np.random.choice(indices_factions, p=probabilites_factions)
         moyennes = matrice_moyennes[idx]
         
+        nom_faction = f"Pro-{noms_candidats[idx]}"
+        
         utilities = {}
         for j, nom in enumerate(noms_candidats):
             ecart_type = np.random.uniform(10, 20)
             score = np.random.normal(moyennes[j], ecart_type)
             utilities[nom] = round(np.clip(score, 0, 100), 1)
             
-        electeur = Electeur(id_electeur=i, utilities=utilities)
+        electeur = Electeur(id_electeur=i, utilities=utilities, faction=nom_faction)
         population.append(electeur)
         
     return population, probabilites_factions, matrice_moyennes
 
 
 if __name__ == "__main__":
-    print("=== TEST SCÉNARIO FIXE ===")
-    ma_pop_fixe = generer_population(3)
-    for electeur in ma_pop_fixe:
-        print(f"Électeur n°{electeur.id} | Favori: {electeur.get_favori()} | Utilities: {electeur.utilities}")
-        
-    print("\n=== TEST SCÉNARIO ALÉATOIRE ===")
-    ma_pop_alea, probas, _ = generer_election_aleatoire(3)
+
+    NB_TEST = 10000
+    print(f"=== TEST SCÉNARIO FIXE ({NB_TEST} électeurs) ===")
+    ma_pop_fixe = generer_population(NB_TEST)
     
-    # Affichage des probabilités générées pour ce scénario
-    for i, nom in enumerate(CANDIDATS.values()):
-        print(f"Poids de la faction Pro-{nom} : {probas[i]*100:.1f}%")
+    compteur_fixe = {f"Pro-{nom}": 0 for nom in CANDIDATS.values()}
+    for e in ma_pop_fixe:
+        compteur_fixe[e.faction] += 1
         
-    for electeur in ma_pop_alea:
-        print(f"Électeur n°{electeur.id} | Favori: {electeur.get_favori()} | Utilities: {electeur.utilities}")
+    for faction, compte in compteur_fixe.items():
+        pourcentage = (compte / NB_TEST) * 100
+        print(f"La faction {faction} représente {pourcentage:.1f}% de la population générée")    
+    
+    print(f"\n\n=== TEST SCÉNARIO ALÉATOIRE ({NB_TEST} électeurs) ===")
+    ma_pop_alea, probas, _ = generer_election_aleatoire(NB_TEST)
+    
+    compteur_alea = {f"Pro-{nom}": 0 for nom in CANDIDATS.values()}
+    for e in ma_pop_alea:
+        compteur_alea[e.faction] += 1
+        
+    for faction, compte in compteur_alea.items():
+        pourcentage = (compte / NB_TEST) * 100
+        print(f"La faction {faction} représente {pourcentage:.1f}% de la population générée")
+        
