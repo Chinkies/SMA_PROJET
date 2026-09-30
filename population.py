@@ -1,6 +1,15 @@
 import numpy as np
 
+
+#=====================================================================================================
+#======================================CANDIDATS======================================================
+#=====================================================================================================
+
 CANDIDATS = {0: "Bob", 1: "Raoul", 2: "jackie", 3: "Mark", 4: "Francis"}
+
+#=====================================================================================================
+#======================================ELECTEURS======================================================
+#=====================================================================================================
 
 class Electeur:
     def __init__(self, id_electeur, utilities, faction="Inconnue"):
@@ -17,6 +26,10 @@ class Electeur:
     def get_approbations(self, seuil=50):
         return [candidat for candidat, score in self.utilities.items() if score >= seuil]
 
+    
+#=====================================================================================================
+#================================GÉNÉRATION DE POP FIXE===============================================
+#=====================================================================================================
 
 def generer_population(nb_electeurs):
     population = []
@@ -76,6 +89,10 @@ def generer_population(nb_electeurs):
     return population
 
 
+#=====================================================================================================
+#===============================GENERATION DE POP ALÉATOIRE===========================================
+#=====================================================================================================
+
 def generer_election_aleatoire(nb_electeurs):
     noms_candidats = list(CANDIDATS.values()) 
     nb_candidats = len(noms_candidats)
@@ -113,6 +130,34 @@ def generer_election_aleatoire(nb_electeurs):
     return population, probabilites_factions, matrice_moyennes
 
 
+#=====================================================================================================
+#======================CALCUL SCORE DE BONHEUR DU MEUILLEUR CANDIDAT==================================
+#=====================================================================================================
+
+def calculer_optimum_social(population, liste_candidats):
+    scores_totaux = {candidat: 0 for candidat in liste_candidats}
+
+    for electeur in population:
+        for candidat, score in electeur.utilities.items():
+            scores_totaux[candidat] += score
+
+    gagnant_optimal = max(scores_totaux, key=scores_totaux.get)
+    score_max = scores_totaux[gagnant_optimal]
+    return gagnant_optimal, score_max, scores_totaux
+
+
+#=====================================================================================================
+#==================================A UTILISER POUR LES TESTS==========================================
+#=====================================================================================================
+
+def fixer_aleatoire(seed_value=42):
+    np.random.seed(seed_value)
+
+
+#=====================================================================================================
+#==========================================TEST=======================================================
+#=====================================================================================================
+
 if __name__ == "__main__":
 
     NB_TEST = 10000
@@ -137,4 +182,7 @@ if __name__ == "__main__":
     for faction, compte in compteur_alea.items():
         pourcentage = (compte / NB_TEST) * 100
         print(f"La faction {faction} représente {pourcentage:.1f}% de la population générée")
-        
+
+
+#=====================================================================================================
+#=====================================================================================================
