@@ -54,6 +54,7 @@ class Electeur:
         cand_a, cand_b = top_2[0], top_2[1]
         return cand_a if self.utilities[cand_a] >= self.utilities[cand_b] else cand_b
 
+
     def voter_deux_tours_t1(self, strategique=False, sondage=None):
         """
         Two-Round Runoff Voting (1er tour)
@@ -76,41 +77,78 @@ class Electeur:
 
         return max(viables, key=lambda c: self.utilities[c])
 
+
     def voter_stv(self, strategique=False, sondage=None):
-        """
-        Single Transferable Vote (STV)
-        - Sincère : classement par ordre d'utilité décroissante.
-        - Stratégique (Burying) : relègue le principal rival du favori à la 
-          dernière position de son bulletin pour limiter ses reports de voix.
+        """Single Transferable Vote (STV)
+
+        - Sincere : ordre de preference reel decroissant.
+        - Strategique (Burying conditionnel) :
+          Si le favori de l'electeur fait partie des deux favoris du sondage,
+          l'electeur relegue son concurrent direct en derniere position pour
+          eviter que des reports de voix ne le fassent passer devant.
+          Sinon (si son favori est marginalise), il vote sincerement pour maximiser
+          l'efficacite de ses reports de voix.
         """
         classement_sincere = self.get_classement()
         if not strategique or not sondage:
             return classement_sincere
 
         favori = classement_sincere[0]
-        sondage_hors_favori = {c: p for c, p in sondage.items() if c != favori}
-        rival_menacant = max(sondage_hors_favori, key=sondage_hors_favori.get)
+        leaders = sorted(sondage, key=sondage.get, reverse=True)[:2]
 
-        bulletin_modifie = [c for c in classement_sincere if c != rival_menacant]
-        bulletin_modifie.append(rival_menacant)
-        return bulletin_modifie
+        # Strategie : l'electeur applique le burying uniquement si son favori est dans le duel de tete
+        if favori in leaders:
+            # Le rival est l'autre candidat du top 2
+            rival = leaders[1] if leaders[0] == favori else leaders[0]
+            bulletin = [c for c in classement_sincere if c != rival]
+            bulletin.append(rival)
+            return bulletin
+
+        # Si le favori n'est pas dans le top 2, enterrer un candidat detruirait
+        # les reports de voix de l'electeur : il reste donc sincere
+        return classement_sincere
+
 
     def voter_approbation(self, strategique=False, sondage=None, seuil_defaut=50):
-        """
-        Approval Voting
-        - Sincère : approuve tout candidat avec u_i(c) >= seuil_defaut.
-        - Stratégique (Threshold Adaptation / Bullet Voting) :
-          Fixe le seuil d'approbation au niveau d'utilité du leader qu'il préfère
-          dans le duel au sommet pour maximiser son impact sur la victoire.
+        """Approval Voting
+
+        - Sincere : approuve tout candidat dont l'utilite >= seuil_defaut (ou le favori si vide).
+        - Strategique (Leader Rule / Duel au sommet) :
+          Repere les 2 favoris du sondage (L1 et L2).
+          L'electeur approuve :
+            1. Son leader prefere parmi les deux.
+            2. Tous les candidats strictement meilleurs que ce leader.
+          Il n'approuve PAS le rival de tete ni aucun candidat moins bien note que lui.
         """
         if not strategique or not sondage:
             return self.get_approbations(seuil=seuil_defaut)
 
+        # Extraction des deux favoris du sondage
         leaders = sorted(sondage, key=sondage.get, reverse=True)[:2]
-        leader_prefere = max(leaders, key=lambda c: self.utilities[c])
+        cand_a, cand_b = leaders[0], leaders[1]
+
+        # Identification du leader prefere et du rival craint
+        if self.utilities[cand_a] >= self.utilities[cand_b]:
+            leader_prefere = cand_a
+            rival_craint = cand_b
+        else:
+            leader_prefere = cand_b
+            rival_craint = cand_a
+
         seuil_strategique = self.utilities[leader_prefere]
 
-        return [c for c, u in self.utilities.items() if u >= seuil_strategique]
+        # Approbation : le leader prefere et tout candidat au moins aussi bon,
+        # en excluant explicitement le rival direct si utilite egale
+        approbations = [
+            c for c, u in self.utilities.items()
+            if u >= seuil_strategique and c != rival_craint
+        ]
+
+        # Securite : garantir au minimum l'approbation du leader prefere
+        if not approbations:
+            approbations = [leader_prefere]
+
+        return approbations
 
     
 #=====================================================================================================
