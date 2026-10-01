@@ -359,7 +359,8 @@ elif page == "3. Résultats & Audit":
             )
             pivot_loss = df.pivot(index="Cas", columns="Système", values="Perte (%)").reindex(
                 index=ORDRE_CAS, columns=ORDRE_SYSTEMES
-            )
+            ).astype(float)
+            
             pivot_sw_moyen = df.pivot(index="Cas", columns="Système", values="Bien-être Social Moyen").reindex(
                 index=ORDRE_CAS, columns=ORDRE_SYSTEMES
             )
@@ -370,12 +371,17 @@ elif page == "3. Résultats & Audit":
                 st.dataframe(pivot_vainqueur, use_container_width=True)
             with col_t2:
                 st.markdown("**Perte de Bien-être Social (%)**")
-                st.dataframe(pivot_loss.style.format("{:.2f}%").background_gradient(cmap="Reds"), use_container_width=True)
+                max_loss = max(1.0, float(pivot_loss.max().max()))
+                st.dataframe(
+                    pivot_loss.style.format("{:.2f}%").background_gradient(
+                        cmap="Reds", vmin=0.0, vmax=max_loss
+                    ),
+                    use_container_width=True
+                )
 
             st.markdown("---")
             st.subheader("Comparaison du Bien-être Social Moyen par Habitant")
 
-            # Graphique réindexé selon ORDRE_SYSTEMES
             fig, ax = plt.subplots(figsize=(10, 4.5))
             pivot_sw_plot = pivot_sw_moyen.T.reindex(ORDRE_SYSTEMES)
             pivot_sw_plot.plot(kind="bar", ax=ax)
@@ -393,7 +399,7 @@ elif page == "3. Résultats & Audit":
                 st.dataframe(df, use_container_width=True)
 
         # -------------------------------------------------------------
-        # ONGLETS INDIVIDUELS PAR SYSTÈME
+        # ONGLETS INDIVIDUELS PAR SYSTÈME (AFFICHAGE VERTICAL)
         # -------------------------------------------------------------
         onglets_systemes = [
             (tab_plurality, "Plurality", "Voix obtenues (%)"),
@@ -409,29 +415,30 @@ elif page == "3. Résultats & Audit":
                 # Filtre des données du système
                 df_sys = df[df["Système"] == sys_nom].set_index("Cas").reindex(ORDRE_CAS)
 
-                col_res, col_chart = st.columns([1, 2])
+                # 1. Tableau de synthèse (en haut, pleine largeur)
+                st.markdown("**Synthèse des Scénarios**")
+                st.dataframe(
+                    df_sys[["Vainqueur", "Bien-être Social Moyen", "Perte (%)", "Optimal ?"]],
+                    use_container_width=True
+                )
 
-                with col_res:
-                    st.markdown("**Synthèse des Scénarios**")
-                    st.dataframe(
-                        df_sys[["Vainqueur", "Bien-être Social Moyen", "Perte (%)", "Optimal ?"]],
-                        use_container_width=True
-                    )
+                st.markdown("---")
 
-                with col_chart:
-                    st.markdown(f"**Évolution des scores des candidats : {label_y}**")
-                    if sys_nom in details_sys and details_sys[sys_nom]:
-                        df_details = pd.DataFrame(details_sys[sys_nom]).T.reindex(ORDRE_CAS)
+                # 2. Graphique d'évolution des scores (en dessous, centré et plus lisible)
+                st.markdown(f"**Évolution des scores des candidats : {label_y}**")
+                if sys_nom in details_sys and details_sys[sys_nom]:
+                    df_details = pd.DataFrame(details_sys[sys_nom]).T.reindex(ORDRE_CAS)
+                    df_plot = df_details.T
 
-                        fig_sys, ax_sys = plt.subplots(figsize=(8, 4))
-                        df_details.plot(kind="bar", ax=ax_sys)
-                        ax_sys.set_ylabel(label_y)
-                        ax_sys.set_title(f"Répartition des choix par candidat ({sys_nom})")
-                        ax_sys.set_xticklabels(ORDRE_CAS, rotation=25, ha="right")
-                        ax_sys.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
-                        plt.tight_layout()
-                        st.pyplot(fig_sys)
-                        plt.close()
+                    fig_sys, ax_sys = plt.subplots(figsize=(10, 4.5))
+                    df_plot.plot(kind="bar", ax=ax_sys)
+                    ax_sys.set_ylabel(label_y)
+                    ax_sys.set_title(f"Impact des scénarios stratégiques par candidat ({sys_nom})")
+                    ax_sys.set_xticklabels(df_plot.index, rotation=0)
+                    ax_sys.legend(title="Scénarios", bbox_to_anchor=(1.02, 1), loc="upper left")
+                    plt.tight_layout()
+                    st.pyplot(fig_sys)
+                    plt.close()
 
 
 # =============================================================================
