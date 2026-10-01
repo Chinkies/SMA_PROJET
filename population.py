@@ -26,6 +26,87 @@ class Electeur:
     def get_approbations(self, seuil=50):
         return [candidat for candidat, score in self.utilities.items() if score >= seuil]
 
+    #-------------------------------------------------------------------------------------------------
+    #---------------------------STRATÉGIES DE VOTE PAR MODE DE SCRUTIN--------------------------------
+    #-------------------------------------------------------------------------------------------------
+
+    def voter_pluralite(self, strategique=False, sondage=None):
+        """
+        Plurality / FPTP
+        - Sincère : vote pour le candidat favori.
+        - Stratégique (Compromis) : si le favori n'est pas dans les 2 leaders
+          du sondage, vote pour le préféré parmi les 2 leaders (vote utile).
+        """
+        favori = self.get_favori()
+        if not strategique or not sondage:
+            return favori
+
+        top_2 = sorted(sondage, key=sondage.get, reverse=True)[:2]
+
+        if favori in top_2:
+            return favori
+
+        cand_a, cand_b = top_2[0], top_2[1]
+        return cand_a if self.utilities[cand_a] >= self.utilities[cand_b] else cand_b
+
+    def voter_deux_tours_t1(self, strategique=False, sondage=None):
+        """
+        Two-Round Runoff Voting (1er tour)
+        - Sincère : vote pour le favori.
+        - Stratégique : sécurise sa voix en votant pour le meilleur candidat
+          parmi les 3 plus grands prétendants au second tour.
+        """
+        # Attention, il existe une autre comportement pour le vote stratégique deux tours : 
+        # le pari stratégique, voter pour un candidat adverse plus faible au 1er tour afin 
+        # d'assurer un duel facile au 2d tour pour son propre favori.
+
+        favori = self.get_favori()
+        if not strategique or not sondage:
+            return favori
+
+        viables = sorted(sondage, key=sondage.get, reverse=True)[:3]
+
+        if favori in viables:
+            return favori
+
+        return max(viables, key=lambda c: self.utilities[c])
+
+    def voter_stv(self, strategique=False, sondage=None):
+        """
+        Single Transferable Vote (STV)
+        - Sincère : classement par ordre d'utilité décroissante.
+        - Stratégique (Burying) : relègue le principal rival du favori à la 
+          dernière position de son bulletin pour limiter ses reports de voix.
+        """
+        classement_sincere = self.get_classement()
+        if not strategique or not sondage:
+            return classement_sincere
+
+        favori = classement_sincere[0]
+        sondage_hors_favori = {c: p for c, p in sondage.items() if c != favori}
+        rival_menacant = max(sondage_hors_favori, key=sondage_hors_favori.get)
+
+        bulletin_modifie = [c for c in classement_sincere if c != rival_menacant]
+        bulletin_modifie.append(rival_menacant)
+        return bulletin_modifie
+
+    def voter_approbation(self, strategique=False, sondage=None, seuil_defaut=50):
+        """
+        Approval Voting
+        - Sincère : approuve tout candidat avec u_i(c) >= seuil_defaut.
+        - Stratégique (Threshold Adaptation / Bullet Voting) :
+          Fixe le seuil d'approbation au niveau d'utilité du leader qu'il préfère
+          dans le duel au sommet pour maximiser son impact sur la victoire.
+        """
+        if not strategique or not sondage:
+            return self.get_approbations(seuil=seuil_defaut)
+
+        leaders = sorted(sondage, key=sondage.get, reverse=True)[:2]
+        leader_prefere = max(leaders, key=lambda c: self.utilities[c])
+        seuil_strategique = self.utilities[leader_prefere]
+
+        return [c for c, u in self.utilities.items() if u >= seuil_strategique]
+
     
 #=====================================================================================================
 #================================GÉNÉRATION DE POP FIXE===============================================
