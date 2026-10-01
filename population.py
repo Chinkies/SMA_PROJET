@@ -1,3 +1,5 @@
+import random
+from collections import Counter
 import numpy as np
 
 
@@ -238,6 +240,29 @@ def fixer_aleatoire(seed_value=42):
     np.random.seed(seed_value)
 
 
+#=====================================================================================================
+#=============================================SONDAGE=================================================
+#=====================================================================================================
+
+def generer_sondage(population, liste_candidats, taille_echantillon=None):
+    """
+    Réalise un sondage d'intentions de vote (basé sur le 1er choix sincère).
+    Si taille_echantillon est None, interroge toute la population.
+    """
+    if taille_echantillon is None or taille_echantillon >= len(population):
+        sondes = population
+    else:
+        sondes = random.sample(population, taille_echantillon)
+        
+    intentions = {c: 0 for c in liste_candidats}
+    for electeur in sondes:
+        intentions[electeur.get_favori()] += 1
+        
+    # Conversion en pourcentages pour que ce soit lisible par un LLM
+    total_sondes = len(sondes)
+    sondage_pct = {c: round((v / total_sondes) * 100, 1) for c, v in intentions.items()}
+    
+    return sondage_pct
 #=====================================================================================================
 #==========================================TEST=======================================================
 #=====================================================================================================
