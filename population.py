@@ -238,6 +238,7 @@ def calculer_optimum_social(population, liste_candidats):
 
 def fixer_aleatoire(seed_value=42):
     np.random.seed(seed_value)
+    random.seed(seed_value)
 
 
 #=====================================================================================================
