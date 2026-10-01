@@ -24,7 +24,10 @@ class Electeur:
         return sorted(self.utilities, key=self.utilities.get, reverse=True)
 
     def get_approbations(self, seuil=50):
-        return [candidat for candidat, score in self.utilities.items() if score >= seuil]
+        approbations = [candidat for candidat, score in self.utilities.items() if score >= seuil]
+        if not approbations:
+            approbations = [self.get_favori()]
+        return approbations
 
     
 #=====================================================================================================
