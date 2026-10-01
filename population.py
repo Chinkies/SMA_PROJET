@@ -5,7 +5,7 @@ import numpy as np
 #======================================CANDIDATS======================================================
 #=====================================================================================================
 
-CANDIDATS = {0: "Bob", 1: "Raoul", 2: "jackie", 3: "Mark", 4: "Francis"}
+CANDIDATS = {0: "Bob", 1: "Raoul", 2: "Jackie", 3: "Mark", 4: "Francis"}
 
 #=====================================================================================================
 #======================================ELECTEURS======================================================
@@ -34,7 +34,7 @@ class Electeur:
 def generer_population(nb_electeurs):
     population = []
     
-    noms_factions = ["Pro-Bob", "Pro-Raoul", "Pro-jackie", "Pro-Mark", "Pro-Francis"]
+    noms_factions = ["Pro-Bob", "Pro-Raoul", "Pro-Jackie", "Pro-Mark", "Pro-Francis"]
     probas_factions = [0.35, 0.25, 0.20, 0.12, 0.08]
     
     for i in range(nb_electeurs):
@@ -54,7 +54,7 @@ def generer_population(nb_electeurs):
             score_mark    = np.random.normal(50, 15)
             score_francis = np.random.normal(20, 10)
             
-        elif faction == "Pro-jackie":
+        elif faction == "Pro-Jackie":
             score_bob     = np.random.normal(15, 10)    
             score_raoul   = np.random.normal(40, 15)  
             score_jackie  = np.random.normal(85, 10)
@@ -78,7 +78,7 @@ def generer_population(nb_electeurs):
         utilities = {
             "Bob": round(np.clip(score_bob, 0, 100), 1),
             "Raoul": round(np.clip(score_raoul, 0, 100), 1),
-            "jackie": round(np.clip(score_jackie, 0, 100), 1),
+            "Jackie": round(np.clip(score_jackie, 0, 100), 1),
             "Mark": round(np.clip(score_mark, 0, 100), 1),
             "Francis": round(np.clip(score_francis, 0, 100), 1)
         }
