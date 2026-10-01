@@ -52,11 +52,20 @@ if "matrice_comparative" not in st.session_state:
     st.session_state.matrice_comparative = None
 if "export_dir" not in st.session_state:
     st.session_state.export_dir = "./outputs/"
+if "stv_rounds_details" not in st.session_state:
+    st.session_state.stv_rounds_details = {}
 
 
 # =============================================================================
 # FONCTIONS UTILITAIRES DE SIMULATION
 # =============================================================================
+def calculer_metriques_injustice(pop, elu):
+    """Calcule le regret individuel moyen et l'écart-type d'utilité."""
+    utilites_elues = [e.utilities[elu] for e in pop]
+    regrets = [max(e.utilities.values()) - e.utilities[elu] for e in pop]
+    return float(np.mean(regrets)), float(np.std(utilites_elues))
+
+
 def executer_scrutin_individuel(systeme_nom, pop, candidats, taux_strat, sondage, seuil_appr=50):
     """Exécute un seul scrutin et renvoie le vainqueur et les stats."""
     if systeme_nom == "Plurality":
@@ -69,13 +78,14 @@ def executer_scrutin_individuel(systeme_nom, pop, candidats, taux_strat, sondage
         elu, details = vote_approval(pop, candidats, taux_strat, sondage, seuil_defaut=seuil_appr)
 
     sw = calculer_social_welfare(pop, elu)
-    return elu, sw, details
+    regret_moyen, std_u = calculer_metriques_injustice(pop, elu)
+    return elu, sw, regret_moyen, std_u, details
 
 
 def lancer_simulation_complete(pop, candidats, seuil_appr=50):
     """
     Exécute les 5 cas demandés sur les 4 systèmes de vote en enregistrant
-    les scores détaillés pour chaque scrutin.
+    les scores détaillés et métriques pour chaque scrutin.
     """
     s_complet = generer_sondage(pop, candidats, taille_echantillon=len(pop))
     taille_biaisee = max(15, int(len(pop) * 0.02))
@@ -98,6 +108,7 @@ def lancer_simulation_complete(pop, candidats, seuil_appr=50):
     systemes_ordre = ["Plurality", "Two-Round", "STV", "Approval"]
     lignes = []
     details_par_systeme = {s: {} for s in systemes_ordre}
+    stv_rounds_details = {}
 
     for nom_cas, taux, sondage in cas_definitions:
         # 1. Plurality
@@ -113,9 +124,13 @@ def lancer_simulation_complete(pop, candidats, seuil_appr=50):
         # 3. STV
         elu_stv, hist_stv = vote_stv(pop, candidats, taux, sondage)
         sw_stv = calculer_social_welfare(pop, elu_stv)
-        # On extrait le 1er tour de STV pour observer l'effet du report/stratégie
         t1_stv = hist_stv[0] if hist_stv else {}
         details_par_systeme["STV"][nom_cas] = {c: (t1_stv.get(c, 0) / n_pop) * 100 for c in candidats}
+        # Stockage des tours STV en % pour chaque scénario
+        stv_rounds_details[nom_cas] = [
+            {c: (tour_dict.get(c, 0) / n_pop) * 100 for c in candidats}
+            for tour_dict in hist_stv
+        ]
 
         # 4. Approval
         elu_app, scores_app = vote_approval(pop, candidats, taux, sondage, seuil_defaut=seuil_appr)
@@ -133,6 +148,8 @@ def lancer_simulation_complete(pop, candidats, seuil_appr=50):
             elu, sw = resultats_cas[sys_nom]
             perte = sw_opt - sw
             pct_perte = (perte / sw_opt) * 100 if sw_opt > 0 else 0.0
+            regret_moyen, std_u = calculer_metriques_injustice(pop, elu)
+
             lignes.append({
                 "Cas": nom_cas,
                 "Système": sys_nom,
@@ -142,22 +159,29 @@ def lancer_simulation_complete(pop, candidats, seuil_appr=50):
                 "Bien-être Social Moyen": round(sw / n_pop, 2),
                 "Perte Absolue": round(perte, 1),
                 "Perte (%)": round(pct_perte, 2),
+                "Regret Moyen": round(regret_moyen, 2),
+                "Inégalité (σ)": round(std_u, 2),
                 "Optimal ?": "OUI" if elu == cand_opt else "NON"
             })
 
     df_resultats = pd.DataFrame(lignes)
     st.session_state.matrice_comparative = df_resultats
+    st.session_state.stv_rounds_details = stv_rounds_details
+
+    regret_opt, std_opt = calculer_metriques_injustice(pop, cand_opt)
     st.session_state.optimum_info = {
         "candidat": cand_opt,
         "sw_total": sw_opt,
-        "sw_moyen": sw_opt / n_pop
+        "sw_moyen": sw_opt / n_pop,
+        "regret_moyen": regret_opt,
+        "std_u": std_opt
     }
     st.session_state.details_par_systeme = details_par_systeme
     return df_resultats
 
 
 # =============================================================================
-# BARRE LATÉRALE : NAVIGATION ET STATUT
+# BARRE LATÉRALE
 # =============================================================================
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
@@ -200,10 +224,10 @@ if page == "1. Population":
                 pop, _, _ = generer_election_aleatoire(n_electeurs)
 
             st.session_state.population = pop
-            # Invalidation des anciens résultats
             st.session_state.sondage_complet = None
             st.session_state.sondage_biaise = None
             st.session_state.matrice_comparative = None
+            st.session_state.stv_rounds_details = {}
             st.success(f"Population de {n_electeurs} électeurs générée avec succès !")
 
     with col_vis:
@@ -212,7 +236,6 @@ if page == "1. Population":
             pop = st.session_state.population
             candidats = st.session_state.liste_candidats
 
-            # 1. Barplot des Factions
             factions = [e.faction for e in pop]
             counts = pd.Series(factions).value_counts(normalize=True) * 100
 
@@ -223,7 +246,6 @@ if page == "1. Population":
             st.pyplot(fig)
             plt.close()
 
-            # 2. Utilités moyennes par candidat
             utilites_moyennes = {
                 c: np.mean([e.utilities[c] for e in pop]) for c in candidats
             }
@@ -255,9 +277,6 @@ elif page == "2. Simulation":
         pop = st.session_state.population
         candidats = st.session_state.liste_candidats
 
-        # -------------------------------------------------------------
-        # Bouton MAJEUR : Simulation Complète
-        # -------------------------------------------------------------
         st.subheader("Lancement Global des 5 Scénarios")
         st.markdown("""
         Exécute simultanément les 4 scrutins sur les 5 configurations :
@@ -271,9 +290,6 @@ elif page == "2. Simulation":
 
         st.markdown("---")
 
-        # -------------------------------------------------------------
-        # Simulation Unitaire / Test ciblé
-        # -------------------------------------------------------------
         st.subheader("Simulation Ciblée / Unitaire")
         col_sond, col_scrutin = st.columns(2)
 
@@ -298,14 +314,17 @@ elif page == "2. Simulation":
                 if taux_strat > 0 and sondage_a_utiliser is None:
                     st.error("Pour un vote stratégique, calculez d'abord un sondage !")
                 else:
-                    elu, sw, details = executer_scrutin_individuel(
+                    elu, sw, regret, std_u, details = executer_scrutin_individuel(
                         sys_choisi, pop, candidats, taux_strat, sondage_a_utiliser, seuil_app
                     )
                     cand_opt, sw_opt, _ = calculer_optimum_social(pop, candidats)
                     loss = ((sw_opt - sw) / sw_opt) * 100
 
                     st.markdown(f"### Résultat : Élu **{elu}**")
-                    st.metric(label="Social Welfare", value=f"{sw:.1f}", delta=f"-{loss:.2f}% de perte")
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1.metric("Social Welfare", f"{sw:.1f}", delta=f"-{loss:.2f}% de perte")
+                    col_m2.metric("Regret Moyen", f"{regret:.2f} pts")
+                    col_m3.metric("Inégalité (σ)", f"{std_u:.2f}")
                     st.write("Détails d'exécution :", details)
 
 
@@ -321,8 +340,8 @@ elif page == "3. Résultats & Audit":
         df = st.session_state.matrice_comparative
         opt = st.session_state.optimum_info
         details_sys = st.session_state.get("details_par_systeme", {})
+        stv_rounds = st.session_state.get("stv_rounds_details", {})
 
-        # Ordre strict exigé
         ORDRE_SYSTEMES = ["Plurality", "Two-Round", "STV", "Approval"]
         ORDRE_CAS = [
             "1. Sincère",
@@ -332,14 +351,13 @@ elif page == "3. Résultats & Audit":
             "5. 50% Strat. (Sondage Biaisé)"
         ]
 
-        # Bandeau de référence
         st.markdown(
-            f"**Référence théorique (Optimum Social) :** Vainqueur **`{opt['candidat']}`** "
-            f"avec un Bien-être Social moyen de **`{opt['sw_moyen']:.2f} / 100`** "
-            f"*(Total : `{opt['sw_total']:.1f}`)*"
+            f"**Référence théorique (Optimum Social) :** Vainqueur **`{opt['candidat']}`** | "
+            f"SW Moyen : **`{opt['sw_moyen']:.2f} / 100`** | "
+            f"Regret Moyen : **`{opt['regret_moyen']:.2f}`** | "
+            f"Dispersion $\\sigma$ : **`{opt['std_u']:.2f}`**"
         )
 
-        # Création des onglets
         tab_global, tab_plurality, tab_two_round, tab_stv, tab_approval = st.tabs([
             "📊 Vue Globale",
             "1. Plurality",
@@ -360,7 +378,9 @@ elif page == "3. Résultats & Audit":
             pivot_loss = df.pivot(index="Cas", columns="Système", values="Perte (%)").reindex(
                 index=ORDRE_CAS, columns=ORDRE_SYSTEMES
             ).astype(float)
-            
+            pivot_regret = df.pivot(index="Cas", columns="Système", values="Regret Moyen").reindex(
+                index=ORDRE_CAS, columns=ORDRE_SYSTEMES
+            ).astype(float)
             pivot_sw_moyen = df.pivot(index="Cas", columns="Système", values="Bien-être Social Moyen").reindex(
                 index=ORDRE_CAS, columns=ORDRE_SYSTEMES
             )
@@ -376,6 +396,25 @@ elif page == "3. Résultats & Audit":
                     pivot_loss.style.format("{:.2f}%").background_gradient(
                         cmap="Reds", vmin=0.0, vmax=max_loss
                     ),
+                    use_container_width=True
+                )
+
+            st.markdown("---")
+            st.subheader("Indicateurs d'Injustice et d'Inégalité")
+            col_reg, col_gini = st.columns(2)
+            with col_reg:
+                st.markdown("**Regret Individuel Moyen (pts d'utilité perdus)**")
+                st.dataframe(
+                    pivot_regret.style.format("{:.2f}").background_gradient(cmap="Oranges"),
+                    use_container_width=True
+                )
+            with col_gini:
+                st.markdown("**Inégalité / Frustration ($sigma$ des utilités)**")
+                pivot_std = df.pivot(index="Cas", columns="Système", values="Inégalité (σ)").reindex(
+                    index=ORDRE_CAS, columns=ORDRE_SYSTEMES
+                ).astype(float)
+                st.dataframe(
+                    pivot_std.style.format("{:.2f}").background_gradient(cmap="Blues"),
                     use_container_width=True
                 )
 
@@ -399,12 +438,12 @@ elif page == "3. Résultats & Audit":
                 st.dataframe(df, use_container_width=True)
 
         # -------------------------------------------------------------
-        # ONGLETS INDIVIDUELS PAR SYSTÈME (AFFICHAGE VERTICAL)
+        # ONGLETS INDIVIDUELS
         # -------------------------------------------------------------
         onglets_systemes = [
             (tab_plurality, "Plurality", "Voix obtenues (%)"),
             (tab_two_round, "Two-Round", "Voix au 1er Tour (%)"),
-            (tab_stv, "STV", "Voix de 1ère Préférence (Tour 1) (%)"),
+            (tab_stv, "STV", "Voix de 1ère Préférence (%)"),
             (tab_approval, "Approval", "Taux d'Approbation (%)")
         ]
 
@@ -412,33 +451,65 @@ elif page == "3. Résultats & Audit":
             with tab:
                 st.subheader(f"Analyse détaillée : {sys_nom}")
 
-                # Filtre des données du système
                 df_sys = df[df["Système"] == sys_nom].set_index("Cas").reindex(ORDRE_CAS)
 
-                # 1. Tableau de synthèse (en haut, pleine largeur)
                 st.markdown("**Synthèse des Scénarios**")
                 st.dataframe(
-                    df_sys[["Vainqueur", "Bien-être Social Moyen", "Perte (%)", "Optimal ?"]],
+                    df_sys[["Vainqueur", "Bien-être Social Moyen", "Perte (%)", "Regret Moyen", "Inégalité (σ)", "Optimal ?"]],
                     use_container_width=True
                 )
 
                 st.markdown("---")
 
-                # 2. Graphique d'évolution des scores (en dessous, centré et plus lisible)
-                st.markdown(f"**Évolution des scores des candidats : {label_y}**")
+                # Graphique avec Candidats en Abscisse
+                st.markdown(f"**Comparaison par Candidat sous chaque scénario : {label_y}**")
                 if sys_nom in details_sys and details_sys[sys_nom]:
-                    df_details = pd.DataFrame(details_sys[sys_nom]).T.reindex(ORDRE_CAS)
-                    df_plot = df_details.T
+                    df_details = pd.DataFrame(details_sys[sys_nom]).reindex(columns=ORDRE_CAS)
 
                     fig_sys, ax_sys = plt.subplots(figsize=(10, 4.5))
-                    df_plot.plot(kind="bar", ax=ax_sys)
+                    df_details.plot(kind="bar", ax=ax_sys)
                     ax_sys.set_ylabel(label_y)
-                    ax_sys.set_title(f"Impact des scénarios stratégiques par candidat ({sys_nom})")
-                    ax_sys.set_xticklabels(df_plot.index, rotation=0)
-                    ax_sys.legend(title="Scénarios", bbox_to_anchor=(1.02, 1), loc="upper left")
+                    ax_sys.set_title(f"Répartition par candidat selon le scénario ({sys_nom})")
+                    ax_sys.set_xticklabels(df_details.index, rotation=0)
+                    ax_sys.legend(title="Scénario", bbox_to_anchor=(1.02, 1), loc="upper left")
                     plt.tight_layout()
                     st.pyplot(fig_sys)
                     plt.close()
+
+                # SECTION SPÉCIFIQUE STV : DYNAMIQUE TOUR PAR TOUR
+                if sys_nom == "STV" and stv_rounds:
+                    st.markdown("---")
+                    st.subheader("Cascade d'élimination et Reports de voix (STV)")
+                    scen_choisi = st.selectbox(
+                        "Choisir un scénario pour voir l'historique des transferts :",
+                        ORDRE_CAS,
+                        key="select_scen_stv"
+                    )
+
+                    tours_data = stv_rounds.get(scen_choisi, [])
+                    if tours_data:
+                        # Création du DataFrame (Colonnes = Candidats, Lignes = Tour 1, Tour 2...)
+                        df_rounds = pd.DataFrame(tours_data)
+                        df_rounds.index = [f"Tour {i+1}" for i in range(len(df_rounds))]
+
+                        col_stv_g, col_stv_t = st.columns([2, 1])
+
+                        with col_stv_g:
+                            fig_stv, ax_stv = plt.subplots(figsize=(8, 4))
+                            # Barres empilées pour visualiser la redistribution des voix
+                            df_rounds.plot(kind="bar", stacked=True, ax=ax_stv, colormap="tab10")
+                            ax_stv.set_ylabel("% des voix actives")
+                            ax_stv.set_title(f"Éliminations et reports successifs ({scen_choisi})")
+                            ax_stv.set_xticklabels(df_rounds.index, rotation=0)
+                            ax_stv.axhline(50.0, color="black", linestyle="--", linewidth=1, label="Majorité absolue (50%)")
+                            ax_stv.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+                            plt.tight_layout()
+                            st.pyplot(fig_stv)
+                            plt.close()
+
+                        with col_stv_t:
+                            st.markdown("**Voix par tour (%)**")
+                            st.dataframe(df_rounds.round(1), use_container_width=True)
 
 
 # =============================================================================
