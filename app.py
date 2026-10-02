@@ -48,10 +48,10 @@ CANDIDATS_SPATIAUX_DEFAUT = [
 ]
 
 CLUSTERS_SPATIAUX_DEFAUT = [
-    {"nom": "Bloc Gauche", "x": -0.65, "y": 0.30, "sigma": 0.22, "poids": 35.0},
-    {"nom": "Bloc Centre", "x": 0.00, "y": 0.05, "sigma": 0.28, "poids": 20.0},
-    {"nom": "Bloc Droite", "x": 0.60, "y": -0.25, "sigma": 0.20, "poids": 30.0},
-    {"nom": "Bloc Périphérie", "x": 0.40, "y": 0.60, "sigma": 0.35, "poids": 15.0},
+    {"nom": "Bloc Gauche", "x": -0.65, "y": 0.30, "sigma": 0.22, "poids": 35.0, "couleur": "#436CAE"},
+    {"nom": "Bloc Centre", "x": 0.00, "y": 0.05, "sigma": 0.28, "poids": 20.0, "couleur": "#436CAE"},
+    {"nom": "Bloc Droite", "x": 0.60, "y": -0.25, "sigma": 0.20, "poids": 30.0, "couleur": "#436CAE"},
+    {"nom": "Bloc Périphérie", "x": 0.40, "y": 0.60, "sigma": 0.35, "poids": 15.0, "couleur": "#436CAE"},
 ]
 
 
@@ -85,6 +85,18 @@ if "candidats_spatiaux" not in st.session_state:
     st.session_state.candidats_spatiaux = [c.copy() for c in CANDIDATS_SPATIAUX_DEFAUT]
 if "clusters_spatiaux" not in st.session_state:
     st.session_state.clusters_spatiaux = [cl.copy() for cl in CLUSTERS_SPATIAUX_DEFAUT]
+
+
+# =============================================================================
+# UTILITAIRES COULEURS
+# =============================================================================
+def hex_to_rgba(hex_color, alpha=0.15):
+    """Convertit un code hexadécimal (#RRGGBB) en chaîne rgba(...) pour Plotly."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) == 6:
+        r, g, b = tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+        return f"rgba({r}, {g}, {b}, {alpha})"
+    return f"rgba(67, 108, 175, {alpha})"
 
 
 # =============================================================================
@@ -150,7 +162,12 @@ def modal_modifier_cluster(idx):
     with col_y:
         y = st.number_input("Centre Y :", min_value=-1.0, max_value=1.0, value=float(cl["y"]), step=0.05)
     sigma = st.slider("Dispersion (σ) :", 0.05, 0.60, float(cl["sigma"]), 0.01)
-    poids = st.number_input("Poids (%) :", min_value=1.0, max_value=100.0, value=float(cl["poids"]), step=1.0)
+    
+    col_p, col_c = st.columns(2)
+    with col_p:
+        poids = st.number_input("Poids (%) :", min_value=1.0, max_value=100.0, value=float(cl["poids"]), step=1.0)
+    with col_c:
+        couleur = st.color_picker("Couleur :", value=cl.get("couleur", "#436CAE"))
 
     if st.button("Enregistrer les modifications", type="primary", use_container_width=True):
         if not nom.strip():
@@ -161,7 +178,8 @@ def modal_modifier_cluster(idx):
                 "x": round(x, 2),
                 "y": round(y, 2),
                 "sigma": round(sigma, 2),
-                "poids": round(poids, 1)
+                "poids": round(poids, 1),
+                "couleur": couleur
             }
             st.rerun()
 
@@ -175,7 +193,12 @@ def modal_ajouter_cluster():
     with col_y:
         y = st.number_input("Centre Y :", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
     sigma = st.slider("Dispersion (σ) :", 0.05, 0.60, 0.25, 0.01)
-    poids = st.number_input("Poids (%) :", min_value=1.0, max_value=100.0, value=20.0, step=1.0)
+    
+    col_p, col_c = st.columns(2)
+    with col_p:
+        poids = st.number_input("Poids (%) :", min_value=1.0, max_value=100.0, value=20.0, step=1.0)
+    with col_c:
+        couleur = st.color_picker("Couleur :", value="#436CAE")
 
     if st.button("Ajouter", type="primary", use_container_width=True):
         if not nom.strip():
@@ -186,7 +209,8 @@ def modal_ajouter_cluster():
                 "x": round(x, 2),
                 "y": round(y, 2),
                 "sigma": round(sigma, 2),
-                "poids": round(poids, 1)
+                "poids": round(poids, 1),
+                "couleur": couleur
             })
             st.rerun()
 
@@ -378,64 +402,64 @@ if page == "1. Population":
 
             st.markdown("---")
 
-            # --- GESTION DES CANDIDATS ---
-            st.subheader("2. Candidats")
-            candidats = st.session_state.candidats_spatiaux
+            # --- DÉROULANT : GESTION DES CANDIDATS ---
+            with st.expander("👤 2. Gestion des Candidats", expanded=True):
+                candidats = st.session_state.candidats_spatiaux
 
-            for idx, c in enumerate(candidats):
-                col_info, col_btn_m, col_btn_d = st.columns([3, 1, 1])
-                with col_info:
-                    st.markdown(
-                        f"<span style='color:{c['couleur']}; font-weight:bold;'>● {c['nom']}</span> "
-                        f"<code>({c['x']}, {c['y']})</code>",
-                        unsafe_allow_html=True
-                    )
-                with col_btn_m:
-                    if st.button("✏️", key=f"btn_edit_c_{idx}", help="Modifier"):
-                        modal_modifier_candidat(idx)
-                with col_btn_d:
-                    if st.button("🗑️", key=f"btn_del_c_{idx}", help="Supprimer"):
-                        if len(candidats) <= 2:
-                            st.toast("Il faut au minimum 2 candidats !", icon="⚠️")
-                        else:
-                            st.session_state.candidats_spatiaux.pop(idx)
-                            st.rerun()
+                for idx, c in enumerate(candidats):
+                    col_info, col_btn_m, col_btn_d = st.columns([3, 1, 1])
+                    with col_info:
+                        st.markdown(
+                            f"<span style='color:{c['couleur']}; font-weight:bold;'>● {c['nom']}</span> "
+                            f"<code>({c['x']}, {c['y']})</code>",
+                            unsafe_allow_html=True
+                        )
+                    with col_btn_m:
+                        if st.button("✏️", key=f"btn_edit_c_{idx}", help="Modifier"):
+                            modal_modifier_candidat(idx)
+                    with col_btn_d:
+                        if st.button("🗑️", key=f"btn_del_c_{idx}", help="Supprimer"):
+                            if len(candidats) <= 2:
+                                st.toast("Il faut au minimum 2 candidats !", icon="⚠️")
+                            else:
+                                st.session_state.candidats_spatiaux.pop(idx)
+                                st.rerun()
 
-            if st.button("➕ Ajouter un Candidat", use_container_width=True):
-                modal_ajouter_candidat()
+                if st.button("➕ Ajouter un Candidat", use_container_width=True):
+                    modal_ajouter_candidat()
 
-            st.markdown("---")
+            # --- DÉROULANT : GESTION DES CLUSTERS ---
+            with st.expander("👥 3. Gestion des Clusters d'Électeurs", expanded=True):
+                clusters = st.session_state.clusters_spatiaux
+                total_poids = sum(cl["poids"] for cl in clusters)
 
-            # --- GESTION DES CLUSTERS ---
-            st.subheader("3. Clusters d'Électeurs")
-            clusters = st.session_state.clusters_spatiaux
-            total_poids = sum(cl["poids"] for cl in clusters)
+                if abs(total_poids - 100.0) > 0.1:
+                    st.caption(f"⚠️ Somme des poids : **{total_poids:.1f}%** (normalisée à 100% à la génération)")
+                else:
+                    st.caption("✅ Somme des poids : **100%**")
 
-            if abs(total_poids - 100.0) > 0.1:
-                st.caption(f"⚠️ Somme des poids : **{total_poids:.1f}%** (normalisée à 100% à la génération)")
-            else:
-                st.caption("✅ Somme des poids : **100%**")
+                for idx, cl in enumerate(clusters):
+                    col_info_cl, col_btn_m_cl, col_btn_d_cl = st.columns([3, 1, 1])
+                    with col_info_cl:
+                        couleur_cl = cl.get("couleur", "#436CAE")
+                        st.markdown(
+                            f"<span style='color:{couleur_cl}; font-weight:bold;'>● {cl['nom']}</span> "
+                            f"({cl['poids']}%) <code>({cl['x']}, {cl['y']}) σ={cl['sigma']}</code>",
+                            unsafe_allow_html=True
+                        )
+                    with col_btn_m_cl:
+                        if st.button("✏️", key=f"btn_edit_cl_{idx}", help="Modifier"):
+                            modal_modifier_cluster(idx)
+                    with col_btn_d_cl:
+                        if st.button("🗑️", key=f"btn_del_cl_{idx}", help="Supprimer"):
+                            if len(clusters) <= 1:
+                                st.toast("Il faut au minimum 1 cluster !", icon="⚠️")
+                            else:
+                                st.session_state.clusters_spatiaux.pop(idx)
+                                st.rerun()
 
-            for idx, cl in enumerate(clusters):
-                col_info_cl, col_btn_m_cl, col_btn_d_cl = st.columns([3, 1, 1])
-                with col_info_cl:
-                    st.markdown(
-                        f"**{cl['nom']}** ({cl['poids']}%) "
-                        f"<code>({cl['x']}, {cl['y']}) σ={cl['sigma']}</code>"
-                    )
-                with col_btn_m_cl:
-                    if st.button("✏️", key=f"btn_edit_cl_{idx}", help="Modifier"):
-                        modal_modifier_cluster(idx)
-                with col_btn_d_cl:
-                    if st.button("🗑️", key=f"btn_del_cl_{idx}", help="Supprimer"):
-                        if len(clusters) <= 1:
-                            st.toast("Il faut au minimum 1 cluster !", icon="⚠️")
-                        else:
-                            st.session_state.clusters_spatiaux.pop(idx)
-                            st.rerun()
-
-            if st.button("➕ Ajouter un Cluster", use_container_width=True):
-                modal_ajouter_cluster()
+                if st.button("➕ Ajouter un Cluster", use_container_width=True):
+                    modal_ajouter_cluster()
 
             st.markdown("---")
             btn_gen_spat = st.button(
@@ -447,7 +471,7 @@ if page == "1. Population":
                 st.info("Le générateur spatial 2D sera connecté à l'Étape 2 !")
 
         # ---------------------------------------------------------------------
-        # COLONNE DROITE : VISUALISATION PLOTLY ÉPURÉE
+        # COLONNE DROITE : VISUALISATION PLOTLY
         # ---------------------------------------------------------------------
         with col_spatial_vis:
             st.subheader("Visualisation du Modèle Spatial")
@@ -468,11 +492,12 @@ if page == "1. Population":
             fig_spatial.add_vline(x=0, line_width=1, line_dash="dash", line_color="gray")
             fig_spatial.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray")
 
-            # 1. Traces pour les clusters (zones d'influence sans croix)
+            # 1. Traces pour les clusters (zones d'influence avec couleur propre)
             if vis_clusters:
                 theta = np.linspace(0, 2 * np.pi, 60)
                 for cl in clusters:
                     cx, cy, r = cl["x"], cl["y"], cl["sigma"]
+                    cl_col = cl.get("couleur", "#436CAE")
                     x_circle = cx + r * np.cos(theta)
                     y_circle = cy + r * np.sin(theta)
 
@@ -481,27 +506,26 @@ if page == "1. Population":
                         y=y_circle,
                         mode="lines",
                         fill="toself",
-                        fillcolor="rgba(70, 130, 180, 0.12)",
-                        line=dict(color="rgba(70, 130, 180, 0.4)", width=1.5, dash="dot"),
+                        fillcolor=hex_to_rgba(cl_col, alpha=0.15),
+                        line=dict(color=hex_to_rgba(cl_col, alpha=0.55), width=1.5, dash="dot"),
                         name=f"σ {cl['nom']}",
                         hoverinfo="skip",
                         showlegend=False
                     ))
 
-                # Libellé textuel discret au barycentre du cluster (pas de croix)
-                fig_spatial.add_trace(go.Scatter(
-                    x=[cl["x"] for cl in clusters],
-                    y=[cl["y"] for cl in clusters],
-                    mode="text",
-                    text=[f"<b>{cl['nom']}</b><br>({cl['poids']}%)" for cl in clusters],
-                    textposition="middle center",
-                    textfont=dict(size=11, color="rgba(44, 62, 80, 0.75)"),
-                    name="Clusters",
-                    hoverinfo="skip",
-                    showlegend=False
-                ))
+                    fig_spatial.add_trace(go.Scatter(
+                        x=[cl["x"]],
+                        y=[cl["y"]],
+                        mode="text",
+                        text=[f"<b>{cl['nom']}</b><br>({cl['poids']}%)"],
+                        textposition="middle center",
+                        textfont=dict(size=11, color=cl_col),
+                        name=cl["nom"],
+                        hoverinfo="skip",
+                        showlegend=False
+                    ))
 
-            # 2. Traces pour les électeurs (si déjà générés à l'étape suivante)
+            # 2. Traces pour les électeurs (si déjà générés)
             if vis_electeurs:
                 if st.session_state.population is not None and getattr(st.session_state.population[0], "position", None) is not None:
                     xs_elec = [e.position[0] for e in st.session_state.population]
