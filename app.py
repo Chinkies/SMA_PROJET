@@ -8,6 +8,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 # Imports des modules du projet
@@ -36,6 +37,30 @@ st.set_page_config(
 )
 
 # =============================================================================
+# DÉFINITIONS DU CAS D'ÉCOLE SPATIAL PAR DÉFAUT
+# =============================================================================
+CANDIDATS_SPATIAUX_DEFAUT = [
+    {"nom": "Bob", "x": -0.60, "y": 0.20, "couleur": "#1f77b4"},
+    {"nom": "Raoul", "x": -0.70, "y": 0.40, "couleur": "#d62728"},
+    {"nom": "Jackie", "x": 0.00, "y": 0.00, "couleur": "#2ca02c"},
+    {"nom": "Mark", "x": 0.65, "y": -0.30, "couleur": "#ff7f0e"},
+    {"nom": "Francis", "x": 0.75, "y": -0.60, "couleur": "#9467bd"},
+]
+
+CLUSTERS_SPATIAUX_DEFAUT = [
+    {"nom": "Bloc Gauche", "x": -0.65, "y": 0.30, "sigma": 0.22, "poids": 35.0},
+    {"nom": "Bloc Centre", "x": 0.00, "y": 0.05, "sigma": 0.28, "poids": 20.0},
+    {"nom": "Bloc Droite", "x": 0.60, "y": -0.25, "sigma": 0.20, "poids": 30.0},
+    {"nom": "Bloc Périphérie", "x": 0.40, "y": 0.60, "sigma": 0.35, "poids": 15.0},
+]
+
+
+def reinitialiser_modele_spatial():
+    st.session_state.candidats_spatiaux = [c.copy() for c in CANDIDATS_SPATIAUX_DEFAUT]
+    st.session_state.clusters_spatiaux = [cl.copy() for cl in CLUSTERS_SPATIAUX_DEFAUT]
+
+
+# =============================================================================
 # INITIALISATION DU SESSION STATE
 # =============================================================================
 if "population" not in st.session_state:
@@ -54,6 +79,116 @@ if "export_dir" not in st.session_state:
     st.session_state.export_dir = "./outputs/"
 if "stv_rounds_details" not in st.session_state:
     st.session_state.stv_rounds_details = {}
+
+# Session state Modèle Spatial 2D
+if "candidats_spatiaux" not in st.session_state:
+    st.session_state.candidats_spatiaux = [c.copy() for c in CANDIDATS_SPATIAUX_DEFAUT]
+if "clusters_spatiaux" not in st.session_state:
+    st.session_state.clusters_spatiaux = [cl.copy() for cl in CLUSTERS_SPATIAUX_DEFAUT]
+
+
+# =============================================================================
+# DIALOGUES (MODALES DE MODIFICATION / AJOUT)
+# =============================================================================
+@st.dialog("Modifier le candidat")
+def modal_modifier_candidat(idx):
+    c = st.session_state.candidats_spatiaux[idx]
+    nom = st.text_input("Nom :", value=c["nom"])
+    col_x, col_y = st.columns(2)
+    with col_x:
+        x = st.number_input("Position X (Éco) :", min_value=-1.0, max_value=1.0, value=float(c["x"]), step=0.05)
+    with col_y:
+        y = st.number_input("Position Y (Soc) :", min_value=-1.0, max_value=1.0, value=float(c["y"]), step=0.05)
+    couleur = st.color_picker("Couleur :", value=c["couleur"])
+
+    if st.button("Enregistrer les modifications", type="primary", use_container_width=True):
+        if not nom.strip():
+            st.error("Le nom ne peut pas être vide.")
+        else:
+            st.session_state.candidats_spatiaux[idx] = {
+                "nom": nom.strip(),
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "couleur": couleur
+            }
+            st.rerun()
+
+
+@st.dialog("Ajouter un candidat")
+def modal_ajouter_candidat():
+    nom = st.text_input("Nom :", value="Nouveau")
+    col_x, col_y = st.columns(2)
+    with col_x:
+        x = st.number_input("Position X (Éco) :", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
+    with col_y:
+        y = st.number_input("Position Y (Soc) :", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
+    couleur = st.color_picker("Couleur :", value="#3366cc")
+
+    if st.button("Ajouter", type="primary", use_container_width=True):
+        noms_existants = [c["nom"] for c in st.session_state.candidats_spatiaux]
+        if not nom.strip():
+            st.error("Le nom ne peut pas être vide.")
+        elif nom.strip() in noms_existants:
+            st.error("Ce nom de candidat existe déjà.")
+        else:
+            st.session_state.candidats_spatiaux.append({
+                "nom": nom.strip(),
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "couleur": couleur
+            })
+            st.rerun()
+
+
+@st.dialog("Modifier le cluster")
+def modal_modifier_cluster(idx):
+    cl = st.session_state.clusters_spatiaux[idx]
+    nom = st.text_input("Nom du cluster :", value=cl["nom"])
+    col_x, col_y = st.columns(2)
+    with col_x:
+        x = st.number_input("Centre X :", min_value=-1.0, max_value=1.0, value=float(cl["x"]), step=0.05)
+    with col_y:
+        y = st.number_input("Centre Y :", min_value=-1.0, max_value=1.0, value=float(cl["y"]), step=0.05)
+    sigma = st.slider("Dispersion (σ) :", 0.05, 0.60, float(cl["sigma"]), 0.01)
+    poids = st.number_input("Poids (%) :", min_value=1.0, max_value=100.0, value=float(cl["poids"]), step=1.0)
+
+    if st.button("Enregistrer les modifications", type="primary", use_container_width=True):
+        if not nom.strip():
+            st.error("Le nom ne peut pas être vide.")
+        else:
+            st.session_state.clusters_spatiaux[idx] = {
+                "nom": nom.strip(),
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "sigma": round(sigma, 2),
+                "poids": round(poids, 1)
+            }
+            st.rerun()
+
+
+@st.dialog("Ajouter un cluster")
+def modal_ajouter_cluster():
+    nom = st.text_input("Nom :", value="Nouveau Groupe")
+    col_x, col_y = st.columns(2)
+    with col_x:
+        x = st.number_input("Centre X :", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
+    with col_y:
+        y = st.number_input("Centre Y :", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
+    sigma = st.slider("Dispersion (σ) :", 0.05, 0.60, 0.25, 0.01)
+    poids = st.number_input("Poids (%) :", min_value=1.0, max_value=100.0, value=20.0, step=1.0)
+
+    if st.button("Ajouter", type="primary", use_container_width=True):
+        if not nom.strip():
+            st.error("Le nom ne peut pas être vide.")
+        else:
+            st.session_state.clusters_spatiaux.append({
+                "nom": nom.strip(),
+                "x": round(x, 2),
+                "y": round(y, 2),
+                "sigma": round(sigma, 2),
+                "poids": round(poids, 1)
+            })
+            st.rerun()
 
 
 # =============================================================================
@@ -111,28 +246,23 @@ def lancer_simulation_complete(pop, candidats, seuil_appr=50):
     stv_rounds_details = {}
 
     for nom_cas, taux, sondage in cas_definitions:
-        # 1. Plurality
         elu_p, scores_p = vote_plurality(pop, candidats, taux, sondage)
         sw_p = calculer_social_welfare(pop, elu_p)
         details_par_systeme["Plurality"][nom_cas] = {c: (scores_p.get(c, 0) / n_pop) * 100 for c in candidats}
 
-        # 2. Two-Round
         elu_tr, t1_tr, _ = vote_two_round(pop, candidats, taux, sondage)
         sw_tr = calculer_social_welfare(pop, elu_tr)
         details_par_systeme["Two-Round"][nom_cas] = {c: (t1_tr["scores"].get(c, 0) / n_pop) * 100 for c in candidats}
 
-        # 3. STV
         elu_stv, hist_stv = vote_stv(pop, candidats, taux, sondage)
         sw_stv = calculer_social_welfare(pop, elu_stv)
         t1_stv = hist_stv[0] if hist_stv else {}
         details_par_systeme["STV"][nom_cas] = {c: (t1_stv.get(c, 0) / n_pop) * 100 for c in candidats}
-        # Stockage des tours STV en % pour chaque scénario
         stv_rounds_details[nom_cas] = [
             {c: (tour_dict.get(c, 0) / n_pop) * 100 for c in candidats}
             for tour_dict in hist_stv
         ]
 
-        # 4. Approval
         elu_app, scores_app = vote_approval(pop, candidats, taux, sondage, seuil_defaut=seuil_appr)
         sw_app = calculer_social_welfare(pop, elu_app)
         details_par_systeme["Approval"][nom_cas] = {c: (scores_app.get(c, 0) / n_pop) * 100 for c in candidats}
@@ -203,66 +333,296 @@ if st.session_state.sondage_biaise is not None:
 
 
 # =============================================================================
-# PAGE 1 : POPULATION & VISUALISATION
+# PAGE 1 : POPULATION & CONFIGURATION
 # =============================================================================
 if page == "1. Population":
     st.title("Génération et Inspection de la Population")
 
-    col_cfg, col_vis = st.columns([1, 2])
+    tab_spatial, tab_factions = st.tabs([
+        "🧭 Modèle Spatial 2D",
+        "📊 Modèle par Factions (Historique)"
+    ])
 
-    with col_cfg:
-        st.subheader("Paramètres")
-        type_pop = st.selectbox("Modèle de génération :", ["Scénario Fixe", "Scénario Aléatoire (Dirichlet)"])
-        n_electeurs = st.slider("Nombre d'électeurs (N) :", min_value=100, max_value=5000, value=1000, step=100)
-        seed = st.number_input("Graine aléatoire (Seed) :", value=42, step=1)
+    # =========================================================================
+    # ONGLET 1 : MODÈLE SPATIAL 2D
+    # =========================================================================
+    with tab_spatial:
+        st.markdown(
+            "Configurez les candidats et les clusters d'électeurs sur l'échiquier politique 2D "
+            "($X$ : Axe Économique $[-1, 1]$, $Y$ : Axe Sociétal $[-1, 1]$)."
+        )
 
-        if st.button("Générer la Population", type="primary"):
-            fixer_aleatoire(seed)
-            if type_pop == "Scénario Fixe":
-                pop = generer_population(n_electeurs)
+        col_spatial_cfg, col_spatial_vis = st.columns([1, 1], gap="medium")
+
+        # ---------------------------------------------------------------------
+        # COLONNE GAUCHE : PARAMÉTRAGE
+        # ---------------------------------------------------------------------
+        with col_spatial_cfg:
+            st.subheader("1. Paramètres Généraux")
+            n_electeurs_spat = st.slider(
+                "Nombre d'électeurs (N) :",
+                min_value=100, max_value=5000, value=1000, step=100,
+                key="slider_n_spat"
+            )
+            seed_spat = st.number_input(
+                "Graine aléatoire (Seed) :",
+                value=42, step=1,
+                key="seed_spat"
+            )
+
+            st.button(
+                "🔄 Réinitialiser au Cas d'École par Défaut",
+                on_click=reinitialiser_modele_spatial,
+                use_container_width=True
+            )
+
+            st.markdown("---")
+
+            # --- GESTION DES CANDIDATS ---
+            st.subheader("2. Candidats")
+            candidats = st.session_state.candidats_spatiaux
+
+            for idx, c in enumerate(candidats):
+                col_info, col_btn_m, col_btn_d = st.columns([3, 1, 1])
+                with col_info:
+                    st.markdown(
+                        f"<span style='color:{c['couleur']}; font-weight:bold;'>● {c['nom']}</span> "
+                        f"<code>({c['x']}, {c['y']})</code>",
+                        unsafe_allow_html=True
+                    )
+                with col_btn_m:
+                    if st.button("✏️", key=f"btn_edit_c_{idx}", help="Modifier"):
+                        modal_modifier_candidat(idx)
+                with col_btn_d:
+                    if st.button("🗑️", key=f"btn_del_c_{idx}", help="Supprimer"):
+                        if len(candidats) <= 2:
+                            st.toast("Il faut au minimum 2 candidats !", icon="⚠️")
+                        else:
+                            st.session_state.candidats_spatiaux.pop(idx)
+                            st.rerun()
+
+            if st.button("➕ Ajouter un Candidat", use_container_width=True):
+                modal_ajouter_candidat()
+
+            st.markdown("---")
+
+            # --- GESTION DES CLUSTERS ---
+            st.subheader("3. Clusters d'Électeurs")
+            clusters = st.session_state.clusters_spatiaux
+            total_poids = sum(cl["poids"] for cl in clusters)
+
+            if abs(total_poids - 100.0) > 0.1:
+                st.caption(f"⚠️ Somme des poids : **{total_poids:.1f}%** (normalisée à 100% à la génération)")
             else:
-                pop, _, _ = generer_election_aleatoire(n_electeurs)
+                st.caption("✅ Somme des poids : **100%**")
 
-            st.session_state.population = pop
-            st.session_state.sondage_complet = None
-            st.session_state.sondage_biaise = None
-            st.session_state.matrice_comparative = None
-            st.session_state.stv_rounds_details = {}
-            st.success(f"Population de {n_electeurs} électeurs générée avec succès !")
+            for idx, cl in enumerate(clusters):
+                col_info_cl, col_btn_m_cl, col_btn_d_cl = st.columns([3, 1, 1])
+                with col_info_cl:
+                    st.markdown(
+                        f"**{cl['nom']}** ({cl['poids']}%) "
+                        f"<code>({cl['x']}, {cl['y']}) σ={cl['sigma']}</code>"
+                    )
+                with col_btn_m_cl:
+                    if st.button("✏️", key=f"btn_edit_cl_{idx}", help="Modifier"):
+                        modal_modifier_cluster(idx)
+                with col_btn_d_cl:
+                    if st.button("🗑️", key=f"btn_del_cl_{idx}", help="Supprimer"):
+                        if len(clusters) <= 1:
+                            st.toast("Il faut au minimum 1 cluster !", icon="⚠️")
+                        else:
+                            st.session_state.clusters_spatiaux.pop(idx)
+                            st.rerun()
 
-    with col_vis:
-        st.subheader("Distribution et Profils Idéologiques")
-        if st.session_state.population is not None:
-            pop = st.session_state.population
-            candidats = st.session_state.liste_candidats
+            if st.button("➕ Ajouter un Cluster", use_container_width=True):
+                modal_ajouter_cluster()
 
-            factions = [e.faction for e in pop]
-            counts = pd.Series(factions).value_counts(normalize=True) * 100
+            st.markdown("---")
+            btn_gen_spat = st.button(
+                "🚀 Générer la Population Spatiale",
+                type="primary",
+                use_container_width=True
+            )
+            if btn_gen_spat:
+                st.info("Le générateur spatial 2D sera connecté à l'Étape 2 !")
 
-            fig, ax = plt.subplots(figsize=(7, 3))
-            counts.plot(kind="bar", ax=ax, color="#2E86AB")
-            ax.set_ylabel("% de la population")
-            ax.set_title("Répartition des Factions")
-            st.pyplot(fig)
-            plt.close()
+        # ---------------------------------------------------------------------
+        # COLONNE DROITE : VISUALISATION PLOTLY ÉPURÉE
+        # ---------------------------------------------------------------------
+        with col_spatial_vis:
+            st.subheader("Visualisation du Modèle Spatial")
 
-            utilites_moyennes = {
-                c: np.mean([e.utilities[c] for e in pop]) for c in candidats
-            }
-            cand_opt, sw_opt, _ = calculer_optimum_social(pop, candidats)
+            # Cases à cocher (Options d'affichage)
+            col_v1, col_v2, col_v3 = st.columns(3)
+            with col_v1:
+                vis_candidats = st.checkbox("Afficher Candidats", value=True, key="chk_cand")
+            with col_v2:
+                vis_clusters = st.checkbox("Afficher Clusters", value=True, key="chk_clust")
+            with col_v3:
+                vis_electeurs = st.checkbox("Afficher Électeurs", value=True, key="chk_elec")
 
-            st.markdown(f"**Candidat Socialement Optimal :** `{cand_opt}` (SW Moyen : `{utilites_moyennes[cand_opt]:.1f}/100`)")
+            # Construction de la figure Plotly
+            fig_spatial = go.Figure()
 
-            fig2, ax2 = plt.subplots(figsize=(7, 3))
-            ax2.bar(utilites_moyennes.keys(), utilites_moyennes.values(), color="#48CAE4")
-            ax2.axhline(utilites_moyennes[cand_opt], color="red", linestyle="--", label=f"Optimum ({cand_opt})")
-            ax2.set_ylabel("Utilité moyenne cardinale (/100)")
-            ax2.set_title("Attractivité globale des candidats")
-            ax2.legend()
-            st.pyplot(fig2)
-            plt.close()
-        else:
-            st.info("Veuillez générer une population dans le panneau de gauche.")
+            # Lignes d'axes orthogonaux médians
+            fig_spatial.add_vline(x=0, line_width=1, line_dash="dash", line_color="gray")
+            fig_spatial.add_hline(y=0, line_width=1, line_dash="dash", line_color="gray")
+
+            # 1. Traces pour les clusters (zones d'influence sans croix)
+            if vis_clusters:
+                theta = np.linspace(0, 2 * np.pi, 60)
+                for cl in clusters:
+                    cx, cy, r = cl["x"], cl["y"], cl["sigma"]
+                    x_circle = cx + r * np.cos(theta)
+                    y_circle = cy + r * np.sin(theta)
+
+                    fig_spatial.add_trace(go.Scatter(
+                        x=x_circle,
+                        y=y_circle,
+                        mode="lines",
+                        fill="toself",
+                        fillcolor="rgba(70, 130, 180, 0.12)",
+                        line=dict(color="rgba(70, 130, 180, 0.4)", width=1.5, dash="dot"),
+                        name=f"σ {cl['nom']}",
+                        hoverinfo="skip",
+                        showlegend=False
+                    ))
+
+                # Libellé textuel discret au barycentre du cluster (pas de croix)
+                fig_spatial.add_trace(go.Scatter(
+                    x=[cl["x"] for cl in clusters],
+                    y=[cl["y"] for cl in clusters],
+                    mode="text",
+                    text=[f"<b>{cl['nom']}</b><br>({cl['poids']}%)" for cl in clusters],
+                    textposition="middle center",
+                    textfont=dict(size=11, color="rgba(44, 62, 80, 0.75)"),
+                    name="Clusters",
+                    hoverinfo="skip",
+                    showlegend=False
+                ))
+
+            # 2. Traces pour les électeurs (si déjà générés à l'étape suivante)
+            if vis_electeurs:
+                if st.session_state.population is not None and getattr(st.session_state.population[0], "position", None) is not None:
+                    xs_elec = [e.position[0] for e in st.session_state.population]
+                    ys_elec = [e.position[1] for e in st.session_state.population]
+                    fig_spatial.add_trace(go.Scatter(
+                        x=xs_elec,
+                        y=ys_elec,
+                        mode="markers",
+                        marker=dict(size=4, color="#a0aec0", opacity=0.4),
+                        name="Électeurs",
+                        hoverinfo="skip",
+                        showlegend=False
+                    ))
+
+            # 3. Traces pour les candidats
+            if vis_candidats:
+                for c in candidats:
+                    fig_spatial.add_trace(go.Scatter(
+                        x=[c["x"]],
+                        y=[c["y"]],
+                        mode="markers+text",
+                        marker=dict(size=18, color=c["couleur"], line=dict(width=2, color="black")),
+                        text=[f"<b>{c['nom']}</b>"],
+                        textposition="top center",
+                        textfont=dict(size=12, color=c["couleur"]),
+                        name=c["nom"],
+                        hovertemplate=f"<b>{c['nom']}</b><br>X: %{{x:.2f}}<br>Y: %{{y:.2f}}<extra></extra>",
+                        showlegend=False
+                    ))
+
+            fig_spatial.update_layout(
+                xaxis=dict(
+                    title="Axe Économique (Gauche ◄► Droite)",
+                    range=[-1.05, 1.05],
+                    zeroline=False,
+                    gridcolor="rgba(200, 200, 200, 0.3)"
+                ),
+                yaxis=dict(
+                    title="Axe Sociétal (Conservateur ◄► Progressiste)",
+                    range=[-1.05, 1.05],
+                    zeroline=False,
+                    scaleanchor="x",
+                    scaleratio=1,
+                    gridcolor="rgba(200, 200, 200, 0.3)"
+                ),
+                height=530,
+                margin=dict(l=20, r=20, t=30, b=20),
+                dragmode="pan"
+            )
+
+            st.plotly_chart(
+                fig_spatial,
+                use_container_width=True,
+                key="spatial_plot"
+            )
+
+    # =========================================================================
+    # ONGLET 2 : MODÈLE PAR FACTIONS (HISTORIQUE)
+    # =========================================================================
+    with tab_factions:
+        st.markdown("Génération basée sur le modèle par factions prédéfinies ou lois de Dirichlet.")
+        col_cfg, col_vis = st.columns([1, 2])
+
+        with col_cfg:
+            st.subheader("Paramètres")
+            type_pop = st.selectbox(
+                "Modèle de génération :",
+                ["Scénario Fixe", "Scénario Aléatoire (Dirichlet)"],
+                key="sel_type_pop_legacy"
+            )
+            n_electeurs = st.slider("Nombre d'électeurs (N) :", min_value=100, max_value=5000, value=1000, step=100, key="slider_n_legacy")
+            seed = st.number_input("Graine aléatoire (Seed) :", value=42, step=1, key="seed_legacy")
+
+            if st.button("Générer la Population (Factions)", type="primary", key="btn_gen_legacy"):
+                fixer_aleatoire(seed)
+                if type_pop == "Scénario Fixe":
+                    pop = generer_population(n_electeurs)
+                else:
+                    pop, _, _ = generer_election_aleatoire(n_electeurs)
+
+                st.session_state.population = pop
+                st.session_state.liste_candidats = list(CANDIDATS.values())
+                st.session_state.sondage_complet = None
+                st.session_state.sondage_biaise = None
+                st.session_state.matrice_comparative = None
+                st.session_state.stv_rounds_details = {}
+                st.success(f"Population de {n_electeurs} électeurs générée avec succès !")
+
+        with col_vis:
+            st.subheader("Distribution et Profils Idéologiques")
+            if st.session_state.population is not None:
+                pop = st.session_state.population
+                candidats_legacy = st.session_state.liste_candidats
+
+                factions = [e.faction for e in pop]
+                counts = pd.Series(factions).value_counts(normalize=True) * 100
+
+                fig, ax = plt.subplots(figsize=(7, 3))
+                counts.plot(kind="bar", ax=ax, color="#2E86AB")
+                ax.set_ylabel("% de la population")
+                ax.set_title("Répartition des Factions")
+                st.pyplot(fig)
+                plt.close()
+
+                utilites_moyennes = {
+                    c: np.mean([e.utilities.get(c, 0) for e in pop]) for c in candidats_legacy
+                }
+                cand_opt, sw_opt, _ = calculer_optimum_social(pop, candidats_legacy)
+
+                st.markdown(f"**Candidat Socialement Optimal :** `{cand_opt}` (SW Moyen : `{utilites_moyennes[cand_opt]:.1f}/100`)")
+
+                fig2, ax2 = plt.subplots(figsize=(7, 3))
+                ax2.bar(utilites_moyennes.keys(), utilites_moyennes.values(), color="#48CAE4")
+                ax2.axhline(utilites_moyennes[cand_opt], color="red", linestyle="--", label=f"Optimum ({cand_opt})")
+                ax2.set_ylabel("Utilité moyenne cardinale (/100)")
+                ax2.set_title("Attractivité globale des candidats")
+                ax2.legend()
+                st.pyplot(fig2)
+                plt.close()
+            else:
+                st.info("Veuillez générer une population dans le panneau de gauche.")
 
 
 # =============================================================================
@@ -461,7 +821,6 @@ elif page == "3. Résultats & Audit":
 
                 st.markdown("---")
 
-                # Graphique avec Candidats en Abscisse
                 st.markdown(f"**Comparaison par Candidat sous chaque scénario : {label_y}**")
                 if sys_nom in details_sys and details_sys[sys_nom]:
                     df_details = pd.DataFrame(details_sys[sys_nom]).reindex(columns=ORDRE_CAS)
@@ -476,7 +835,6 @@ elif page == "3. Résultats & Audit":
                     st.pyplot(fig_sys)
                     plt.close()
 
-                # SECTION SPÉCIFIQUE STV : DYNAMIQUE TOUR PAR TOUR
                 if sys_nom == "STV" and stv_rounds:
                     st.markdown("---")
                     st.subheader("Cascade d'élimination et Reports de voix (STV)")
@@ -488,7 +846,6 @@ elif page == "3. Résultats & Audit":
 
                     tours_data = stv_rounds.get(scen_choisi, [])
                     if tours_data:
-                        # Création du DataFrame (Colonnes = Candidats, Lignes = Tour 1, Tour 2...)
                         df_rounds = pd.DataFrame(tours_data)
                         df_rounds.index = [f"Tour {i+1}" for i in range(len(df_rounds))]
 
@@ -496,7 +853,6 @@ elif page == "3. Résultats & Audit":
 
                         with col_stv_g:
                             fig_stv, ax_stv = plt.subplots(figsize=(8, 4))
-                            # Barres empilées pour visualiser la redistribution des voix
                             df_rounds.plot(kind="bar", stacked=True, ax=ax_stv, colormap="tab10")
                             ax_stv.set_ylabel("% des voix actives")
                             ax_stv.set_title(f"Éliminations et reports successifs ({scen_choisi})")
