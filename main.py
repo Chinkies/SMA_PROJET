@@ -1,14 +1,18 @@
+"""
+main.py - Interface terminal interactive pour le test des élections
+et du vote stratégique (statique et LLM).
+"""
+
 import sys
+
+from agent import CANDIDATS
 from population import (
-    CANDIDATS, 
-    generer_population, 
-    generer_election_aleatoire, 
-    calculer_optimum_social, 
-    preparer_election_mixte,
-    fixer_aleatoire
+    calculer_optimum_social,
+    fixer_aleatoire,
+    generer_population_factions_aleatoire,
+    generer_population_factions_fixe,
 )
-# On importe les utilitaires de tes collègues, mais on recrée des versions allégées des systèmes de vote
-# car on leur passe des listes de bulletins pré-calculés, et non plus des objets Electeur.
+from llm_agents import preparer_election_mixte
 from voting_systems import departager_egalite
 
 def main():
@@ -22,7 +26,7 @@ def main():
         
         print("\nType de population :")
         print("1. Scénario fixe (Factions prédéfinies)")
-        print("2. Scénario aléatoire complet")
+        print("2. Scénario aléatoire complet (Dirichlet)")
         choix_pop = input("Choix (1 ou 2) [1] : ") or "1"
         
         pct_strat = float(input("\nPourcentage d'électeurs stratégiques (0 à 100) [10] : ") or 10.0)
@@ -67,17 +71,17 @@ def main():
 
     # 2. GÉNÉRATION DE LA POPULATION
     if choix_pop == "1":
-        population = generer_population(nb_electeurs)
+        population = generer_population_factions_fixe(nb_electeurs)
     else:
-        population, _, _ = generer_election_aleatoire(nb_electeurs)
-        
+        population, _, _ = generer_population_factions_aleatoire(nb_electeurs)
+
     optimum_candidat, optimum_sw, sw_details = calculer_optimum_social(population, liste_candidats)
     print(f"\n[ÉTAPE 1] Population de {nb_electeurs} électeurs générée.")
     print(f"L'Optimum Social Théorique (Candidat qui maximise le bonheur global) est : {optimum_candidat.upper()}")
     print(f"(Social Welfare Maximum : {round(optimum_sw, 1)})")
     
     # 3. L'ÉLECTION MIXTE (Le cœur de ta partie)
-    print(f"\n[ÉTAPE 2] Préparation des votes ({systeme_selectionne})")
+    print(f"\n[ÉTAPE 2] Préparation des bulletins ({systeme_selectionne})")
     print(f"- {100 - pct_strat}% de votes sincères")
     print(f"- {pct_strat}% de votes stratégiques (Mode {'LLM' if mode_llm_actif else 'Statique'})")
     
@@ -109,8 +113,8 @@ def main():
         # Pour faire simple dans le main, on compte juste le premier tour si l'IA renvoie une string
         # Une vraie implémentation à 2 tours demanderait que bulletins_finaux conserve les utilités
         for vote in bulletins_finaux:
-             if isinstance(vote, str) and vote in scores_finaux:
-                 scores_finaux[vote] += 1
+            if isinstance(vote, str) and vote in scores_finaux:
+                scores_finaux[vote] += 1
         vainqueur_reel = departager_egalite([c for c, v in scores_finaux.items() if v == max(scores_finaux.values())])
         print("(Note: Pour le main interactif, le décompte 2-Tours est simplifié au T1)")
 
@@ -123,13 +127,13 @@ def main():
         vainqueur_reel = departager_egalite([c for c, v in scores_finaux.items() if v == max(scores_finaux.values())])
 
     elif systeme_selectionne == "STV / Ranked-Choice":
-         for bulletin_liste in bulletins_finaux:
+        for bulletin_liste in bulletins_finaux:
             if isinstance(bulletin_liste, list) and len(bulletin_liste) > 0:
                 choix_1 = bulletin_liste[0]
                 if choix_1 in scores_finaux:
-                     scores_finaux[choix_1] += 1
-         vainqueur_reel = departager_egalite([c for c, v in scores_finaux.items() if v == max(scores_finaux.values())])
-         print("(Note: Pour le main interactif, le décompte STV affiche le vainqueur aux 1ères préférences)")
+                    scores_finaux[choix_1] += 1
+        vainqueur_reel = departager_egalite([c for c, v in scores_finaux.items() if v == max(scores_finaux.values())])
+        print("(Note: Pour le main interactif, le décompte STV affiche le vainqueur aux 1ères préférences)")
 
     # 5. RÉSULTATS & AUDIT
     print("\n" + "=" * 60)

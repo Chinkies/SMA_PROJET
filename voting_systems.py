@@ -26,10 +26,10 @@ def vote_plurality(population, liste_candidats, taux_strategique=0.0, sondage=No
     indices_strat = set(random.sample(range(len(population)), nb_strat)) if nb_strat > 0 else set()
 
     for idx, electeur in enumerate(population):
-        est_strat = idx in indices_strat
-        choix = electeur.voter_pluralite(strategique=est_strat, sondage=sondage)
-        if choix in scores:
-            scores[choix] += 1
+        is_strat = idx in indices_strat
+        bulletin = electeur.generer_bulletin_pluralite(strategique=is_strat, sondage=sondage)
+        if bulletin in scores:
+            scores[bulletin] += 1
 
     max_voix = max(scores.values())
     vainqueurs_potentiels = [c for c, v in scores.items() if v == max_voix]
@@ -49,9 +49,9 @@ def vote_two_round(population, liste_candidats, taux_strategique=0.0, sondage=No
     # --- TOUR 1 ---
     scores_t1 = {c: 0 for c in liste_candidats}
     for idx, electeur in enumerate(population):
-        est_strat = idx in indices_strat
-        choix = electeur.voter_deux_tours_t1(strategique=est_strat, sondage=sondage)
-        scores_t1[choix] += 1
+        is_strat = idx in indices_strat
+        bulletin = electeur.generer_bulletin_deux_tours(strategique=is_strat, sondage=sondage)
+        scores_t1[bulletin] += 1
 
     candidats_tries_t1 = sorted(liste_candidats, key=lambda c: (scores_t1[c], -ord(c[0])), reverse=True)
     premier = candidats_tries_t1[0]
@@ -90,7 +90,7 @@ def vote_stv(population, liste_candidats, taux_strategique=0.0, sondage=None):
     indices_strat = set(random.sample(range(nb_electeurs), nb_strat)) if nb_strat > 0 else set()
 
     bulletins = [
-        electeur.voter_stv(strategique=(i in indices_strat), sondage=sondage)
+        electeur.generer_bulletin_stv(strategique=(i in indices_strat), sondage=sondage)
         for i, electeur in enumerate(population)
     ]
     candidats_actifs = set(liste_candidats)
@@ -126,8 +126,8 @@ def vote_approval(population, liste_candidats, taux_strategique=0.0, sondage=Non
     indices_strat = set(random.sample(range(len(population)), nb_strat)) if nb_strat > 0 else set()
 
     for idx, electeur in enumerate(population):
-        est_strat = idx in indices_strat
-        bulletin = electeur.voter_approbation(strategique=est_strat, sondage=sondage, seuil_defaut=seuil_defaut)
+        is_strat = idx in indices_strat
+        bulletin = electeur.generer_bulletin_approbation(strategique=is_strat, sondage=sondage, seuil_defaut=seuil_defaut)
         if not bulletin:
             bulletin = [electeur.get_favori()]
         for candidat in bulletin:

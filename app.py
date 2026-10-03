@@ -12,12 +12,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # Imports des modules du projet
+from agent import CANDIDATS
 from population import (
-    CANDIDATS,
     calculer_optimum_social,
     fixer_aleatoire,
-    generer_election_aleatoire,
-    generer_population,
+    generer_population_factions_aleatoire,
+    generer_population_factions_fixe,
+    generer_population_spatiale,
     generer_sondage,
 )
 from voting_systems import (
@@ -468,7 +469,20 @@ if page == "1. Population":
                 use_container_width=True
             )
             if btn_gen_spat:
-                st.info("Le générateur spatial 2D sera connecté à l'Étape 2 !")
+                fixer_aleatoire(seed_spat)
+                pop = generer_population_spatiale(
+                    n_electeurs_spat,
+                    st.session_state.candidats_spatiaux,
+                    st.session_state.clusters_spatiaux
+                )
+                st.session_state.population = pop
+                st.session_state.liste_candidats = [c["nom"] for c in st.session_state.candidats_spatiaux]
+                st.session_state.sondage_complet = None
+                st.session_state.sondage_biaise = None
+                st.session_state.matrice_comparative = None
+                st.session_state.stv_rounds_details = {}
+                st.toast(f"Population spatiale de {n_electeurs_spat} électeurs générée !", icon="🚀")
+                st.rerun()
 
         # ---------------------------------------------------------------------
         # COLONNE DROITE : VISUALISATION PLOTLY
@@ -602,9 +616,9 @@ if page == "1. Population":
             if st.button("Générer la Population (Factions)", type="primary", key="btn_gen_legacy"):
                 fixer_aleatoire(seed)
                 if type_pop == "Scénario Fixe":
-                    pop = generer_population(n_electeurs)
+                    pop = generer_population_factions_fixe(n_electeurs)
                 else:
-                    pop, _, _ = generer_election_aleatoire(n_electeurs)
+                    pop, _, _ = generer_population_factions_aleatoire(n_electeurs)
 
                 st.session_state.population = pop
                 st.session_state.liste_candidats = list(CANDIDATS.values())
@@ -612,7 +626,8 @@ if page == "1. Population":
                 st.session_state.sondage_biaise = None
                 st.session_state.matrice_comparative = None
                 st.session_state.stv_rounds_details = {}
-                st.success(f"Population de {n_electeurs} électeurs générée avec succès !")
+                st.toast(f"Population de {n_electeurs} électeurs générée avec succès !", icon="✅")
+                st.rerun()
 
         with col_vis:
             st.subheader("Distribution et Profils Idéologiques")
