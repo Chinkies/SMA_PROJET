@@ -1,7 +1,14 @@
 import random
 from collections import Counter
 import numpy as np
+import os
+import time
+from google import genai
+from dotenv import load_dotenv
 
+load_dotenv()
+# Avec la nouvelle librairie, on initialise un "Client"
+client_gemini = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 #=====================================================================================================
 #======================================CANDIDATS======================================================
@@ -150,6 +157,21 @@ class Electeur:
 
         return approbations
 
+
+#=====================================================================================================
+#========================GUIDE POUR QUE L'ÉLECTEUR CHOISISE LA BONNE MÉTHODE==========================
+#=====================================================================================================
+
+def obtenir_vote_statique(electeur, systeme_vote, strategique, sondage):
+    """Aiguille l'électeur vers la bonne méthode de sa classe selon le système."""
+    if systeme_vote == "Plurality (FPTP)":
+        return electeur.voter_pluralite(strategique, sondage)
+    elif systeme_vote == "Two-Round Runoff":
+        return electeur.voter_deux_tours_t1(strategique, sondage)
+    elif systeme_vote == "STV / Ranked-Choice":
+        return electeur.voter_stv(strategique, sondage)
+    elif systeme_vote == "Approval Voting":
+        return electeur.voter_approbation(strategique, sondage)
     
 #=====================================================================================================
 #================================GÉNÉRATION DE POP FIXE===============================================
@@ -297,11 +319,165 @@ def generer_sondage(population, liste_candidats, taille_echantillon=None):
     for electeur in sondes:
         intentions[electeur.get_favori()] += 1
         
-    # Conversion en pourcentages pour que ce soit lisible par un LLM
     total_sondes = len(sondes)
     sondage_pct = {c: round((v / total_sondes) * 100, 1) for c, v in intentions.items()}
     
     return sondage_pct
+
+
+#=====================================================================================================
+#==================GENERATION DE PROMPTS PAR GROUPE AYANT LES MEME PREFERENCES========================
+#=====================================================================================================
+
+def preparer_prompts_llm(echantillon_strategique, sondage_actuel, systeme_vote):
+    """
+    Regroupe les électeurs stratégiques par ordre de préférence exact 
+    pour minimiser les appels API.
+    """
+    groupes_profils = {}
+    
+    for electeur in echantillon_strategique:
+        profil_clé = tuple(electeur.get_classement())
+        
+        if profil_clé not in groupes_profils:
+            groupes_profils[profil_clé] = {
+                "exemple_electeur": electeur,
+                "membres": []
+            }
+        groupes_profils[profil_clé]["membres"].append(electeur)
+        
+    prompts_a_envoyer = {}
+    for profil_clé, data in groupes_profils.items():
+        electeur_type = data["exemple_electeur"]
+        
+        prompt = f"""Tu es un citoyen votant de manière stratégique. 
+Tes notes de préférence pour les candidats (sur 100) sont : {electeur_type.utilities}
+Ton classement sincère est : {list(profil_clé)}
+
+Le dernier sondage donne ces intentions de vote : {sondage_actuel}
+Le mode de scrutin actuel est : {systeme_vote}.
+
+Sachant que tu veux maximiser ton utilité finale et éviter l'élection des candidats que tu détestes, quel est ton vote stratégique ?
+Réponds uniquement par le nom du candidat (ou la liste selon le scrutin), sans aucune autre phrase."""
+
+        prompts_a_envoyer[profil_clé] = prompt
+        
+    return groupes_profils, prompts_a_envoyer
+
+
+#=====================================================================================================
+#===================================INTERROGATION DE GEMINI===========================================
+#=====================================================================================================
+
+def interroger_gemini(prompt, liste_candidats, max_tentatives=3):
+    """
+    Envoie le prompt à Gemini avec un système de réessai en cas de serveur surchargé.
+    Nettoie la réponse pour s'assurer qu'il renvoie bien un candidat valide.
+    """    
+    for tentative in range(max_tentatives):
+        try:
+            reponse = client_gemini.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=prompt
+            )
+            choix = reponse.text.strip()
+            
+            # Nettoyage
+            for candidat in liste_candidats:
+                if candidat.lower() in choix.lower():
+                    return candidat
+                    
+            return choix
+            
+        except Exception as e:
+            erreur_str = str(e)
+            if "503" in erreur_str or "429" in erreur_str:
+                temps_attente = (tentative + 1) * 5
+                print(f"\n[⚠️ Serveur Google occupé] Nouvelle tentative dans {temps_attente} secondes...")
+                time.sleep(temps_attente)
+            else:
+                print(f"Erreur API Gemini inattendue : {e}")
+                return None
+                
+    print("\n[❌ Échec] Impossible d'obtenir une réponse de Gemini après plusieurs tentatives.")
+    return None
+    
+
+#=====================================================================================================
+#===============================EXECUTION DU MODE LLM=================================================
+#=====================================================================================================
+
+def executer_mode_llm(groupes, prompts, liste_candidats):
+    """
+    Parcourt les profils uniques, interroge Gemini une seule fois par profil,
+    et distribue la réponse à tous les électeurs de ce groupe.
+    """
+    reponses_strategiques = {}
+    total_requetes = len(prompts)
+    
+    print(f"Lancement de {total_requetes} requêtes vers Gemini (Mode LLM)...")
+    
+    for i, (profil_cle, prompt) in enumerate(prompts.items(), 1):
+        print(f"Requête {i}/{total_requetes} en cours...")
+        
+        choix_llm = interroger_gemini(prompt, liste_candidats)
+        reponses_strategiques[profil_cle] = choix_llm
+        
+        if i < total_requetes:
+            time.sleep(4) 
+            
+    return reponses_strategiques
+
+
+#=====================================================================================================
+#================================SIMULATION DE L'ÉLECTION COMPLÈTE====================================
+#=====================================================================================================
+
+def preparer_election_mixte(population, liste_candidats, pct_strategique, systeme_vote, taille_echantillon_sondage, mode_llm=False):
+    """
+    Sépare la population, génère le sondage, et applique les stratégies de vote.
+    Retourne la liste complète des bulletins prêts à être comptés.
+    """
+    nb_strat = int(len(population) * (pct_strategique / 100))
+    pop_melangee = population.copy()
+    random.shuffle(pop_melangee)
+    
+    groupe_strategique = pop_melangee[:nb_strat]
+    groupe_sincere = pop_melangee[nb_strat:]
+    
+    sondage = generer_sondage(population, liste_candidats, taille_echantillon=taille_echantillon_sondage)
+    
+    bulletins_finaux = []
+    
+    for electeur in groupe_sincere:
+        bulletins_finaux.append(obtenir_vote_statique(electeur, systeme_vote, strategique=False, sondage=None))
+        
+    if not mode_llm:
+        for electeur in groupe_strategique:
+            bulletins_finaux.append(obtenir_vote_statique(electeur, systeme_vote, strategique=True, sondage=sondage))
+ 
+    else:
+        groupes, prompts = preparer_prompts_llm(groupe_strategique, sondage, systeme_vote)
+        choix_par_profil = executer_mode_llm(groupes, prompts, liste_candidats)
+        
+        for profil_cle, data in groupes.items():
+            vote_choisi = choix_par_profil[profil_cle]
+            
+            for electeur in data["membres"]:
+                # Si le LLM a echoue, on repasse sur un vote sincere par securite
+                if vote_choisi is None:
+                    vote_choisi = obtenir_vote_statique(electeur, systeme_vote, strategique=False, sondage=None)
+                
+                # Formatage specifique si STV ou Approval : conversion de string en liste si necessaire
+                if systeme_vote in ["STV / Ranked-Choice", "Approval Voting"] and isinstance(vote_choisi, str):
+                    vote_choisi = [c.strip() for c in vote_choisi.split(',')]
+                    
+                bulletins_finaux.append(vote_choisi)
+        
+    return bulletins_finaux, sondage
+
+
+
 #=====================================================================================================
 #==========================================TEST=======================================================
 #=====================================================================================================
@@ -332,5 +508,6 @@ if __name__ == "__main__":
         print(f"La faction {faction} représente {pourcentage:.1f}% de la population générée")
 
 
+#=====================================================================================================
 #=====================================================================================================
 #=====================================================================================================
