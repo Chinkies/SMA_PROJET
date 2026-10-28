@@ -1,11 +1,15 @@
+"""
+voting_systems.py - Implémentation des 4 modes de scrutin et moteur d'audit
+avec calcul du Bien-être Social brut et normalisé (Min-Max).
+"""
+
 import copy
 import random
 
 
-# =====================================================================================================
-# ===================================== UTILITAIRES D'AUDIT ===========================================
-# =====================================================================================================
-
+# =============================================================================
+# UTILITAIRES D'AUDIT
+# =============================================================================
 def calculer_social_welfare(population, candidat):
     """Calcule le Bien-être Social total pour un candidat donné."""
     return sum(e.utilities[candidat] for e in population)
@@ -19,15 +23,18 @@ def departager_egalite(candidats):
 # =============================================================================
 # 1. PLURALITY / FIRST PAST THE POST
 # =============================================================================
-
-def vote_plurality(population, liste_candidats, taux_strategique=0.0, sondage=None):
+def vote_plurality(population, liste_candidats, taux_strategique=0.0, sondage=None, indices_strat=None, votes_custom=None):
     scores = {c: 0 for c in liste_candidats}
-    nb_strat = int(len(population) * taux_strategique)
-    indices_strat = set(random.sample(range(len(population)), nb_strat)) if nb_strat > 0 else set()
+    if indices_strat is None:
+        nb_strat = int(len(population) * taux_strategique)
+        indices_strat = set(random.sample(range(len(population)), nb_strat)) if nb_strat > 0 else set()
 
     for idx, electeur in enumerate(population):
-        is_strat = idx in indices_strat
-        bulletin = electeur.generer_bulletin_pluralite(strategique=is_strat, sondage=sondage)
+        if votes_custom and idx in votes_custom:
+            bulletin = votes_custom[idx]
+        else:
+            is_strat = idx in indices_strat
+            bulletin = electeur.generer_bulletin_pluralite(strategique=is_strat, sondage=sondage)
         if bulletin in scores:
             scores[bulletin] += 1
 
@@ -39,19 +46,23 @@ def vote_plurality(population, liste_candidats, taux_strategique=0.0, sondage=No
 # =============================================================================
 # 2. TWO-ROUND RUNOFF VOTING
 # =============================================================================
-
-def vote_two_round(population, liste_candidats, taux_strategique=0.0, sondage=None):
+def vote_two_round(population, liste_candidats, taux_strategique=0.0, sondage=None, indices_strat=None, votes_custom=None):
     nb_electeurs = len(population)
     seuil_majorite = nb_electeurs / 2.0
-    nb_strat = int(nb_electeurs * taux_strategique)
-    indices_strat = set(random.sample(range(nb_electeurs), nb_strat)) if nb_strat > 0 else set()
+    if indices_strat is None:
+        nb_strat = int(nb_electeurs * taux_strategique)
+        indices_strat = set(random.sample(range(nb_electeurs), nb_strat)) if nb_strat > 0 else set()
 
     # --- TOUR 1 ---
     scores_t1 = {c: 0 for c in liste_candidats}
     for idx, electeur in enumerate(population):
-        is_strat = idx in indices_strat
-        bulletin = electeur.generer_bulletin_deux_tours(strategique=is_strat, sondage=sondage)
-        scores_t1[bulletin] += 1
+        if votes_custom and idx in votes_custom:
+            bulletin = votes_custom[idx]
+        else:
+            is_strat = idx in indices_strat
+            bulletin = electeur.generer_bulletin_deux_tours(strategique=is_strat, sondage=sondage)
+        if bulletin in scores_t1:
+            scores_t1[bulletin] += 1
 
     candidats_tries_t1 = sorted(liste_candidats, key=lambda c: (scores_t1[c], -ord(c[0])), reverse=True)
     premier = candidats_tries_t1[0]
@@ -82,17 +93,20 @@ def vote_two_round(population, liste_candidats, taux_strategique=0.0, sondage=No
 # =============================================================================
 # 3. SINGLE TRANSFERABLE VOTE (IRV)
 # =============================================================================
-
-def vote_stv(population, liste_candidats, taux_strategique=0.0, sondage=None):
+def vote_stv(population, liste_candidats, taux_strategique=0.0, sondage=None, indices_strat=None, votes_custom=None):
     nb_electeurs = len(population)
     seuil_majorite = nb_electeurs / 2.0
-    nb_strat = int(nb_electeurs * taux_strategique)
-    indices_strat = set(random.sample(range(nb_electeurs), nb_strat)) if nb_strat > 0 else set()
+    if indices_strat is None:
+        nb_strat = int(nb_electeurs * taux_strategique)
+        indices_strat = set(random.sample(range(nb_electeurs), nb_strat)) if nb_strat > 0 else set()
 
-    bulletins = [
-        electeur.generer_bulletin_stv(strategique=(i in indices_strat), sondage=sondage)
-        for i, electeur in enumerate(population)
-    ]
+    bulletins = []
+    for i, electeur in enumerate(population):
+        if votes_custom and i in votes_custom and isinstance(votes_custom[i], list):
+            bulletins.append(votes_custom[i])
+        else:
+            bulletins.append(electeur.generer_bulletin_stv(strategique=(i in indices_strat), sondage=sondage))
+
     candidats_actifs = set(liste_candidats)
     historique_etapes = []
 
@@ -119,15 +133,18 @@ def vote_stv(population, liste_candidats, taux_strategique=0.0, sondage=None):
 # =============================================================================
 # 4. APPROVAL VOTING
 # =============================================================================
-
-def vote_approval(population, liste_candidats, taux_strategique=0.0, sondage=None, seuil_defaut=50):
+def vote_approval(population, liste_candidats, taux_strategique=0.0, sondage=None, seuil_defaut=60, indices_strat=None, votes_custom=None):
     scores = {c: 0 for c in liste_candidats}
-    nb_strat = int(len(population) * taux_strategique)
-    indices_strat = set(random.sample(range(len(population)), nb_strat)) if nb_strat > 0 else set()
+    if indices_strat is None:
+        nb_strat = int(len(population) * taux_strategique)
+        indices_strat = set(random.sample(range(len(population)), nb_strat)) if nb_strat > 0 else set()
 
     for idx, electeur in enumerate(population):
-        is_strat = idx in indices_strat
-        bulletin = electeur.generer_bulletin_approbation(strategique=is_strat, sondage=sondage, seuil_defaut=seuil_defaut)
+        if votes_custom and idx in votes_custom and isinstance(votes_custom[idx], list):
+            bulletin = votes_custom[idx]
+        else:
+            is_strat = idx in indices_strat
+            bulletin = electeur.generer_bulletin_approbation(strategique=is_strat, sondage=sondage, seuil_defaut=seuil_defaut)
         if not bulletin:
             bulletin = [electeur.get_favori()]
         for candidat in bulletin:
@@ -141,19 +158,26 @@ def vote_approval(population, liste_candidats, taux_strategique=0.0, sondage=Non
 # =============================================================================
 # MOTEUR D'AUDIT GLOBAL COMPARATIF
 # =============================================================================
-
-def auditer_election(population, liste_candidats, taux_strategique=0.0, sondage=None, seuil_approval=50):
+def auditer_election(population, liste_candidats, taux_strategique=0.0, sondage=None, seuil_approval=60, indices_strat=None):
     """
-    Exécute les 4 scrutins et compare les résultats à l'optimum social.
+    Exécute les 4 scrutins sur le même échantillon d'agents stratégiques
+    et calcule à la fois la perte brute et l'efficacité d'utilité normalisée.
     """
     total_utilites = {c: calculer_social_welfare(population, c) for c in liste_candidats}
     optimum_candidat = max(total_utilites, key=total_utilites.get)
+    pire_candidat = min(total_utilites, key=total_utilites.get)
     optimum_sw = total_utilites[optimum_candidat]
+    pire_sw = total_utilites[pire_candidat]
+    amplitude_sw = optimum_sw - pire_sw
 
-    elu_fptp, _ = vote_plurality(population, liste_candidats, taux_strategique, sondage)
-    elu_two_round, _, _ = vote_two_round(population, liste_candidats, taux_strategique, sondage)
-    elu_stv, _ = vote_stv(population, liste_candidats, taux_strategique, sondage)
-    elu_appr, _ = vote_approval(population, liste_candidats, taux_strategique, sondage, seuil_defaut=seuil_approval)
+    if indices_strat is None:
+        nb_strat = int(len(population) * taux_strategique)
+        indices_strat = set(random.sample(range(len(population)), nb_strat)) if nb_strat > 0 else set()
+
+    elu_fptp, _ = vote_plurality(population, liste_candidats, taux_strategique, sondage, indices_strat=indices_strat)
+    elu_two_round, _, _ = vote_two_round(population, liste_candidats, taux_strategique, sondage, indices_strat=indices_strat)
+    elu_stv, _ = vote_stv(population, liste_candidats, taux_strategique, sondage, indices_strat=indices_strat)
+    elu_appr, _ = vote_approval(population, liste_candidats, taux_strategique, sondage, seuil_defaut=seuil_approval, indices_strat=indices_strat)
 
     scrutins = {
         "Plurality": elu_fptp,
@@ -166,40 +190,23 @@ def auditer_election(population, liste_candidats, taux_strategique=0.0, sondage=
     for nom, elu in scrutins.items():
         sw = total_utilites[elu]
         perte = optimum_sw - sw
+        # Satisfaction brute (% de W_opt)
+        sat_brute = (sw / optimum_sw) * 100.0 if optimum_sw > 0 else 0.0
+        # Satisfaction normalisée Min-Max (100% = Optimum, 0% = Pire candidat)
+        sat_norm = ((sw - pire_sw) / amplitude_sw) * 100.0 if amplitude_sw > 0 else 100.0
+
         audit[nom] = {
             "vainqueur": elu,
             "social_welfare": round(sw, 1),
             "loss_absolue": round(perte, 1),
             "loss_pourcentage": round((perte / optimum_sw) * 100, 2) if optimum_sw > 0 else 0.0,
+            "satisfaction_brute": round(sat_brute, 2),
+            "satisfaction_normalisee": round(sat_norm, 2),
             "est_optimal": (elu == optimum_candidat)
         }
 
-    return {"optimum": {"candidat": optimum_candidat, "sw": round(optimum_sw, 1)}, "resultats": audit}
-
-
-#=====================================================================================================
-#==========================================TEST=======================================================
-#=====================================================================================================
-
-if __name__ == "__main__":
-    from population import generer_population, CANDIDATS, fixer_aleatoire, generer_sondage
-    from voting_systems import auditer_election
-
-    fixer_aleatoire(42)
-    pop = generer_population(1000)
-    candidats = list(CANDIDATS.values())
-    sondage = generer_sondage(pop, candidats, taille_echantillon=200)
-
-    print("--- SONDAGE INITIAL (Echantillon de 200) ---")
-    for c, pct in sorted(sondage.items(), key=lambda x: x[1], reverse=True):
-        print(f"  {c:<10}: {pct}%")
-
-    print("\n--- SCRUTIN 100% SINCERE ---")
-    rapport_sincere = auditer_election(pop, candidats, taux_strategique=0.0, sondage=sondage)
-    for nom, data in rapport_sincere["resultats"].items():
-        print(f"  {nom:<15} -> Vainqueur: {data['vainqueur']:<10} | Perte: {data['loss_pourcentage']}%")
-
-    print("\n--- SCRUTIN 50% STRATEGIQUE ---")
-    rapport_mixte = auditer_election(pop, candidats, taux_strategique=0.5, sondage=sondage)
-    for nom, data in rapport_mixte["resultats"].items():
-        print(f"  {nom:<15} -> Vainqueur: {data['vainqueur']:<10} | Perte: {data['loss_pourcentage']}%")
+    return {
+        "optimum": {"candidat": optimum_candidat, "sw": round(optimum_sw, 1)},
+        "pire": {"candidat": pire_candidat, "sw": round(pire_sw, 1)},
+        "resultats": audit
+    }

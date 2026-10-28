@@ -1,250 +1,291 @@
+"""
+benchmark.py - Suite complète de benchmarks Monte-Carlo :
+1. Courbes d'utilité (% de l'Optimum) vs % de votants stratégiques (Sondage Complet)
+2. Courbes d'utilité (% de l'Optimum) vs % de votants stratégiques (Sondage Biaisé 200/10000)
+3. Diagramme en bâtons : Échantillon de 100 agents Statiques vs 100 agents IA (Ollama) sur Pop=10000
+"""
+
+import os
+import random
 import numpy as np
 import matplotlib.pyplot as plt
-import random
-import time
-import os
-from dotenv import load_dotenv
 
-# Import du SDK officiel Google
-from google import genai
-
-# Imports des modules de vos collègues
 from population import (
-    generer_population_spatiale, 
-    generer_sondage, 
-    fixer_aleatoire
+    generer_election_spatiale_aleatoire,
+    generer_sondage,
+    fixer_aleatoire,
 )
-from voting_systems import auditer_election
+from voting_systems import (
+    auditer_election,
+    calculer_social_welfare,
+    vote_plurality,
+    vote_two_round,
+    vote_stv,
+    vote_approval,
+)
+from llm_agents import preparer_prompts_llm, executer_mode_llm, OLLAMA_MODEL
+
+# Dossier de sauvegarde automatique des figures pour le rapport PDF
+OUTPUT_DIR = "./outputs_benchmarks"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 
 # =============================================================================
-# CONFIGURATION DE L'API GEMINI
+# GRAPHIQUES 1 & 2 : COURBES DE SATISFACTION SELON LE % DE VOTE STRATÉGIQUE
 # =============================================================================
-load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
-if API_KEY:
-    client_gemini = genai.Client(api_key=API_KEY)
-else:
-    client_gemini = None
-    print("⚠️ ATTENTION : Aucune clé GEMINI_API_KEY trouvée dans le fichier .env.")
+def run_benchmark_courbes(nb_simulations=40, pop_size=10000, taille_sondage=None, titre="", nom_fichier="courbe.png"):
+    """
+    À chaque simulation :
+      - Génère une NOUVELLE population aléatoire spatiale (nouveaux clusters et candidats)
+      - Génère un NOUVEAU sondage (complet ou biaisé sur 200 personnes)
+      - Évalue les 4 modes de scrutin pour 11 paliers de vote stratégique (0% à 100%)
+    """
+    print(f"\n==================================================================")
+    print(f" DÉMARRAGE : {titre}")
+    print(f" Paramètres : {nb_simulations} simulations | Pop={pop_size} | Sondage={taille_sondage or pop_size}")
+    print(f"==================================================================")
 
-# =============================================================================
-# CAS D'ÉCOLE SPATIAL
-# =============================================================================
-CANDIDATS_SPATIAUX_DEFAUT = [
-    {"nom": "Bob", "x": -0.45, "y": 0.10, "couleur": "#1f77b4"},
-    {"nom": "Raoul", "x": -0.75, "y": 0.30, "couleur": "#d62728"},
-    {"nom": "Jackie", "x": 0.00, "y": 0.00, "couleur": "#2ca02c"},
-    {"nom": "Mark", "x": 0.55, "y": -0.15, "couleur": "#ff7f0e"},
-    {"nom": "Francis", "x": 0.80, "y": -0.45, "couleur": "#9467bd"},
-]
+    taux_values = np.linspace(0.0, 1.0, 11)  # 0%, 10%, ..., 100%
+    systemes = ["Plurality", "Two-Round", "STV", "Approval"]
 
-CLUSTERS_SPATIAUX_DEFAUT = [
-    {"nom": "Bloc Gauche", "x": -0.55, "y": 0.20, "sigma": 0.18, "poids": 40.0, "couleur": "#436CAE"},
-    {"nom": "Bloc Droite", "x": 0.55, "y": -0.20, "sigma": 0.18, "poids": 38.0, "couleur": "#436CAE"},
-    {"nom": "Bloc Centre", "x": 0.00, "y": 0.05, "sigma": 0.14, "poids": 14.0, "couleur": "#436CAE"},
-    {"nom": "Bloc Écologiste", "x": -0.10, "y": 0.60, "sigma": 0.16, "poids": 8.0, "couleur": "#436CAE"},
-]
+    # Stockage des scores de satisfaction (% par rapport à l'Optimum Social)
+    resultats_sat = {s: np.zeros(11) for s in systemes}
 
-# =======================================================================
-# BENCHMARK 1 & 2 : ÉVOLUTION DE LA SATISFACTION (MODÈLE SPATIAL)
-# =======================================================================
-def run_benchmark_courbes(nb_simulations=50, pop_size=1000, taille_sondage=None, titre=""):
-    print(f"\n--- Démarrage Benchmark : {titre} ---")
-    taux_values = np.linspace(0.0, 1.0, 11)
-    candidats_noms = [c["nom"] for c in CANDIDATS_SPATIAUX_DEFAUT]
-    
-    resultats_sw = {
-        "Plurality": np.zeros(11),
-        "Two-Round": np.zeros(11),
-        "STV": np.zeros(11),
-        "Approval": np.zeros(11)
-    }
-    
     for sim in range(nb_simulations):
-        if (sim + 1) % 10 == 0 or sim == 0:
-            print(f"Simulation {sim+1}/{nb_simulations}...")
-            
-        current_seed = random.randint(0, 100000)
-        fixer_aleatoire(current_seed)
-        
-        pop = generer_population_spatiale(pop_size, CANDIDATS_SPATIAUX_DEFAUT, CLUSTERS_SPATIAUX_DEFAUT)
+        if (sim + 1) % 5 == 0 or sim == 0:
+            print(f"  -> Simulation aléatoire {sim + 1}/{nb_simulations}...")
+
+        # Nouvelle graine aléatoire à chaque itération
+        fixer_aleatoire(1000 + sim * 37 + random.randint(1, 999))
+
+        # 1. Génération d'une nouvelle population spatiale aléatoire
+        pop, cands_info, _ = generer_election_spatiale_aleatoire(pop_size)
+        candidats_noms = [c["nom"] for c in cands_info]
+
+        # 2. Génération d'un nouveau sondage (aléatoire / biaisé si taille_sondage < pop_size)
         sondage = generer_sondage(pop, candidats_noms, taille_echantillon=taille_sondage)
-        
+
+        # 3. Évaluation sur les 11 paliers de stratèges
         for i, taux in enumerate(taux_values):
             rapport = auditer_election(pop, candidats_noms, taux_strategique=taux, sondage=sondage)
-            
-            for sys_nom, data in rapport["resultats"].items():
-                pct_satisfaction = 100.0 - data["loss_pourcentage"]
-                resultats_sw[sys_nom][i] += pct_satisfaction
-                
-    for sys_nom in resultats_sw:
-        resultats_sw[sys_nom] /= nb_simulations
+            for sys_nom in systemes:
+                # On utilise la satisfaction brute (% de l'Optimum Social)
+                resultats_sat[sys_nom][i] += rapport["resultats"][sys_nom]["satisfaction_brute"]
 
-    # TRACÉ
+    # Moyenne sur l'ensemble des simulations
+    for sys_nom in systemes:
+        resultats_sat[sys_nom] /= nb_simulations
+
+    # --- TRACÉ DU GRAPHIQUE ---
     plt.figure(figsize=(10, 6))
-    couleurs = {"Plurality": "orange", "Two-Round": "red", "STV": "green", "Approval": "blue"}
-    
-    for sys_nom, valeurs in resultats_sw.items():
-        plt.plot(taux_values * 100, valeurs, marker='o', label=sys_nom, color=couleurs[sys_nom], linewidth=2)
-        
-    plt.title(titre, fontsize=14, fontweight='bold')
-    plt.xlabel("Proportion d'électeurs stratégiques (%)", fontsize=12)
-    plt.ylabel("Satisfaction globale (% de l'Optimum)", fontsize=12)
+    couleurs = {
+        "Plurality": "#ff7f0e",   # Orange
+        "Two-Round": "#d62728",   # Rouge
+        "STV": "#2ca02c",         # Vert
+        "Approval": "#1f77b4"     # Bleu
+    }
+    marqueurs = {"Plurality": "o", "Two-Round": "s", "STV": "^", "Approval": "D"}
+
+    for sys_nom in systemes:
+        plt.plot(
+            taux_values * 100,
+            resultats_sat[sys_nom],
+            marker=marqueurs[sys_nom],
+            label=sys_nom,
+            color=couleurs[sys_nom],
+            linewidth=2.5,
+            markersize=7
+        )
+
+    plt.title(titre, fontsize=14, fontweight="bold")
+    plt.xlabel("Pourcentage de votants stratégiques (%)", fontsize=12)
+    plt.ylabel("Score d'Utilité Sociale (% de l'Optimum)", fontsize=12)
     plt.xticks(np.arange(0, 110, 10))
-    plt.ylim(bottom=min([min(v) for v in resultats_sw.values()]) - 2, top=100.5)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend()
+
+    min_y = min(min(v) for v in resultats_sat.values())
+    plt.ylim(bottom=max(0.0, min_y - 2.0), top=100.5)
+
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.legend(fontsize=11, loc="best")
     plt.tight_layout()
+
+    chemin_fig = os.path.join(OUTPUT_DIR, nom_fichier)
+    plt.savefig(chemin_fig, dpi=300)
+    print(f"  [✅ Graphique sauvegardé dans : {chemin_fig}]")
     plt.show()
 
-# =======================================================================
-# CODE DE THOMAS : WRAPPER LLM ROBUSTE (BOUCLE INFINIE ANTI-PLANTAGE)
-# =======================================================================
-def obtenir_vote_llm(profil_cle, utilites, sondage, systeme, candidats):
-    """Interroge Gemini avec une boucle infinie pour garantir un résultat."""
-    if not client_gemini:
-        return list(profil_cle)[0] 
-        
-    prompt = f"""Tu es un électeur stratégique. Tes notes sur 100 sont : {utilites}.
-Ton ordre sincère est : {list(profil_cle)}.
-Le sondage donne : {sondage}. Le scrutin est : {systeme}.
-Pour qui votes-tu pour maximiser ton utilité finale ? Réponds juste par le nom du candidat."""
-    
-    temps_attente = 5
-    
-    while True: # La fameuse boucle qui ne lâche rien
-        try:
-            reponse = client_gemini.models.generate_content(
-                model='gemini-3.8-flash', 
-                contents=prompt
-            )
-            choix = reponse.text.strip()
-            
-            for cand in candidats:
-                if cand.lower() in choix.lower():
-                    return cand
-            return choix
-            
-        except Exception as e:
-            erreur_str = str(e).lower()
-            if "503" in erreur_str or "429" in erreur_str or "quota" in erreur_str or "unavailable" in erreur_str:
-                print(f"    [⏳ Google saturé] Nouvelle tentative dans {temps_attente}s...")
-                time.sleep(temps_attente)
-                # On augmente le temps d'attente à chaque échec, plafonné à 60 secondes
-                temps_attente = min(temps_attente, 10) 
-            else:
-                # Si c'est une autre erreur de connexion, on insiste aussi
-                print(f"    [⚠️ Erreur de connexion] Réessai dans 10s... Détail : {e}")
-                time.sleep(10)
 
-def simuler_election_llm(pop, candidats, taux_strat, sondage, systeme):
-    """Remplace les votes statiques par les votes du LLM pour l'échantillon."""
-    nb_strat = int(len(pop) * taux_strat)
-    strat_pop = pop[:nb_strat]
-    
-    groupes = {}
-    for e in strat_pop:
-        cle = tuple(e.get_classement())
-        if cle not in groupes:
-            groupes[cle] = e.utilities
-            
-    choix_llm = {}
-    print(f"  -> Appels LLM en cours pour {systeme} ({len(groupes)} profils uniques)...")
-    
-    for i, (cle, utilites) in enumerate(groupes.items(), 1):
-        print(f"     Requête {i}/{len(groupes)}...")
-        choix_llm[cle] = obtenir_vote_llm(cle, utilites, sondage, systeme, candidats)
-        # Pause de base de 4s pour respecter les limites du forfait gratuit
-        time.sleep(4) 
-        
-    # Calcul du Social Welfare avec le nouveau vainqueur
-    scores = {c: 0 for c in candidats}
-    for e in pop[nb_strat:]:
-        scores[e.get_favori()] += 1 
-    for e in strat_pop:
-        vote = choix_llm[tuple(e.get_classement())]
-        if vote in scores:
-             scores[vote] += 1 
-             
-    vainqueur = max(scores, key=scores.get)
-    sw_obtenu = sum(e.utilities[vainqueur] for e in pop)
-    
-    # On renvoie la satisfaction en pourcentage de l'optimum
-    optimum_candidat = max(candidats, key=lambda c: sum(e.utilities[c] for e in pop))
-    sw_optimum = sum(e.utilities[optimum_candidat] for e in pop)
-    
-    return (sw_obtenu / sw_optimum) * 100.0
+# =============================================================================
+# GRAPHIQUE 3 : COMPARAISON ÉCHANTILLON STATIQUE VS OLLAMA (BAR CHART)
+# =============================================================================
+def evaluer_echantillon_ollama_sur_scrutin(pop, candidats, indices_strat, sondage, systeme):
+    """
+    Fait voter les 100 agents de `indices_strat` via l'agent IA (Ollama) et compte les bulletins
+    avec le VRAI moteur électoral du scrutin correspondant.
+    """
+    echantillon_electeurs = [pop[idx] for idx in indices_strat]
+    groupes, prompts = preparer_prompts_llm(echantillon_electeurs, sondage, systeme)
+    choix_par_profil = executer_mode_llm(
+        groupes, prompts, candidats, systeme_vote=systeme, sondage_actuel=sondage
+    )
 
-# =======================================================================
-# BENCHMARK 3 : COMPARAISON STATIQUE VS LLM (Bar Chart)
-# =======================================================================
-def run_benchmark_llm_vs_statique():
-    print("\n--- Démarrage Benchmark : LLM vs SIMPL ---")
-    candidats = [c["nom"] for c in CANDIDATS_SPATIAUX_DEFAUT]
-    
-    # 10 000 électeurs pour stabiliser l'élection, 1% de LLM pour minimiser l'API
-    pop_size = 10000
-    taux_strat = 0.01 
-    taille_sondage = 500
-    
-    pop = generer_population_spatiale(pop_size, CANDIDATS_SPATIAUX_DEFAUT, CLUSTERS_SPATIAUX_DEFAUT)
-    sondage = generer_sondage(pop, candidats, taille_echantillon=taille_sondage)
-    
-    rapport_statique = auditer_election(pop, candidats, taux_strategique=taux_strat, sondage=sondage)
-    
-    sat_statique, sat_llm = [], []
+    votes_custom = {}
+    for idx in indices_strat:
+        electeur = pop[idx]
+        profil_cle = tuple(electeur.get_classement())
+        vote_llm = choix_par_profil.get(profil_cle)
+        if vote_llm is not None:
+            votes_custom[idx] = vote_llm
+
+    if systeme == "Plurality":
+        elu, _ = vote_plurality(pop, candidats, sondage=sondage, indices_strat=indices_strat, votes_custom=votes_custom)
+    elif systeme == "Two-Round":
+        elu, _, _ = vote_two_round(pop, candidats, sondage=sondage, indices_strat=indices_strat, votes_custom=votes_custom)
+    elif systeme == "STV":
+        elu, _ = vote_stv(pop, candidats, sondage=sondage, indices_strat=indices_strat, votes_custom=votes_custom)
+    else:  # Approval
+        elu, _ = vote_approval(pop, candidats, sondage=sondage, indices_strat=indices_strat, votes_custom=votes_custom)
+
+    return elu
+
+
+def run_benchmark_statique_vs_ollama(nb_simulations=10, pop_size=10000, nb_agents_strat=100, taille_sondage=500):
+    """
+    Compare sur la même population aléatoire (N=10000) et le même échantillon (100 agents) :
+      - La décision stratégique d'agents Statiques (heuristiques programmées)
+      - La décision stratégique d'agents IA (LLM local via Ollama)
+    Mesure à la fois :
+      1. Le Bien-être Social Global (% de l'Optimum)
+      2. L'Utilité Individuelle Moyenne obtenue par l'échantillon des 100 agents stratégiques !
+    """
+    print(f"\n==================================================================")
+    print(f" DÉMARRAGE : Comparaison Agents Statiques vs Agents IA (Ollama : {OLLAMA_MODEL})")
+    print(f" Paramètres : {nb_simulations} simulations | Pop={pop_size} | Échantillon={nb_agents_strat} | Sondage={taille_sondage}")
+    print(f"==================================================================")
+
     systemes = ["Plurality", "Two-Round", "STV", "Approval"]
-    
-    for sys in systemes:
-        # Conversion de la perte en taux de satisfaction pour le Statique (SIMPL)
-        sat_statique.append(100.0 - rapport_statique["resultats"][sys]["loss_pourcentage"])
-        # Calcul de la satisfaction pour le LLM
-        sat_llm.append(simuler_election_llm(pop, candidats, taux_strat, sondage, sys))
+    taux_strat = nb_agents_strat / float(pop_size)
 
-    # TRACÉ
+    # 1. Satisfaction de la population globale (% de l'Optimum)
+    sat_globale_stat = {s: 0.0 for s in systemes}
+    sat_globale_ia = {s: 0.0 for s in systemes}
+
+    # 2. Utilité moyenne obtenue par l'échantillon des 100 agents stratégiques eux-mêmes (/100)
+    util_echantillon_stat = {s: 0.0 for s in systemes}
+    util_echantillon_ia = {s: 0.0 for s in systemes}
+
+    for sim in range(nb_simulations):
+        print(f"\n--- Simulation {sim + 1}/{nb_simulations} ---")
+        fixer_aleatoire(5000 + sim * 53 + random.randint(1, 999))
+
+        # Génération d'une nouvelle population aléatoire et d'un nouveau sondage biaisé
+        pop, cands_info, _ = generer_election_spatiale_aleatoire(pop_size)
+        candidats = [c["nom"] for c in cands_info]
+        sondage = generer_sondage(pop, candidats, taille_echantillon=taille_sondage)
+
+        # Tirage de l'échantillon EXACT de 100 électeurs stratégiques
+        indices_strat = set(random.sample(range(pop_size), nb_agents_strat))
+
+        # Optimum social de cette population
+        total_utilites = {c: calculer_social_welfare(pop, c) for c in candidats}
+        sw_opt = max(total_utilites.values())
+
+        # Audit Statique sur ce même échantillon de 100 agents
+        rapport_stat = auditer_election(pop, candidats, taux_strategique=taux_strat, sondage=sondage, indices_strat=indices_strat)
+
+        for sys_nom in systemes:
+            # --- RÉSULTAT STATIQUE ---
+            elu_stat = rapport_stat["resultats"][sys_nom]["vainqueur"]
+            sat_globale_stat[sys_nom] += rapport_stat["resultats"][sys_nom]["satisfaction_brute"]
+            util_echantillon_stat[sys_nom] += np.mean([pop[i].utilities[elu_stat] for i in indices_strat])
+
+            # --- RÉSULTAT IA (OLLAMA) ---
+            print(f"  [{sys_nom}] Consultation d'Ollama ({OLLAMA_MODEL}) pour l'échantillon de {nb_agents_strat} agents...")
+            elu_ia = evaluer_echantillon_ollama_sur_scrutin(pop, candidats, indices_strat, sondage, sys_nom)
+            sw_ia = total_utilites[elu_ia]
+            sat_globale_ia[sys_nom] += (sw_ia / sw_opt) * 100.0
+            util_echantillon_ia[sys_nom] += np.mean([pop[i].utilities[elu_ia] for i in indices_strat])
+
+    # Moyennes
+    vals_stat_glob = [sat_globale_stat[s] / nb_simulations for s in systemes]
+    vals_ia_glob = [sat_globale_ia[s] / nb_simulations for s in systemes]
+    vals_stat_ech = [util_echantillon_stat[s] / nb_simulations for s in systemes]
+    vals_ia_ech = [util_echantillon_ia[s] / nb_simulations for s in systemes]
+
+    # --- TRACÉ DU GRAPHIQUE EN BÂTONS (DOUBLE VUE : GLOBALE & ÉCHANTILLON) ---
     x = np.arange(len(systemes))
     width = 0.35
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    ax.bar(x - width/2, sat_statique, width, label='SIMPL (Statique)', color='darkorange')
-    ax.bar(x + width/2, sat_llm, width, label='LLM (Gemini)', color='green')
+    labels_x = ["1T (Plurality)", "2T (Two-Round)", "STV (Ranked)", "APR (Approval)"]
 
-    ax.set_ylabel('Satisfaction globale (% de l\'Optimum)', fontsize=12)
-    ax.set_title('Comparaison de la Satisfaction : SIMPL vs LLM\n(Pop=10000, LLM=100, Sondage=500)', fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(['1T (FPTP)', '2T (Two-Round)', 'SVT (STV)', 'APR (Approval)'], fontsize=11)
-    
-    # On zoome sur le haut du graphe pour bien voir les différences
-    ax.set_ylim(bottom=min(min(sat_statique), min(sat_llm)) - 2, top=100.5)
-    
-    ax.legend()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Sous-graphe 1 : Utilité Sociale Globale (% de l'Optimum)
+    rects1 = ax1.bar(x - width / 2, vals_stat_glob, width, label="Agents Statiques (SIMPL)", color="#ff7f0e", edgecolor="black")
+    rects2 = ax1.bar(x + width / 2, vals_ia_glob, width, label=f"Agents IA ({OLLAMA_MODEL})", color="#2ca02c", edgecolor="black")
+    ax1.set_ylabel("Score d'Utilité Sociale (% de l'Optimum)", fontsize=11)
+    ax1.set_title(f"Impact sur le Bien-être Global\n(Pop={pop_size}, Échantillon={nb_agents_strat}, Sondage={taille_sondage})", fontweight="bold")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels_x)
+    min_g = min(min(vals_stat_glob), min(vals_ia_glob))
+    ax1.set_ylim(bottom=max(0.0, min_g - 3.0), top=100.5)
+    ax1.grid(axis="y", linestyle="--", alpha=0.6)
+    ax1.legend()
+    ax1.bar_label(rects1, fmt="%.1f%%", padding=3, fontsize=9)
+    ax1.bar_label(rects2, fmt="%.1f%%", padding=3, fontsize=9)
+
+    # Sous-graphe 2 : Satisfaction moyenne des 100 agents de l'échantillon stratégique (/100)
+    rects3 = ax2.bar(x - width / 2, vals_stat_ech, width, label="Agents Statiques (SIMPL)", color="#ff7f0e", edgecolor="black")
+    rects4 = ax2.bar(x + width / 2, vals_ia_ech, width, label=f"Agents IA ({OLLAMA_MODEL})", color="#2ca02c", edgecolor="black")
+    ax2.set_ylabel("Utilité moyenne de l'échantillon stratégique (/100)", fontsize=11)
+    ax2.set_title(f"Gain direct pour l'échantillon de {nb_agents_strat} stratèges\n(Qualité de réflexion Statique vs IA)", fontweight="bold")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(labels_x)
+    min_e = min(min(vals_stat_ech), min(vals_ia_ech))
+    ax2.set_ylim(bottom=max(0.0, min_e - 5.0), top=min(100.0, max(max(vals_stat_ech), max(vals_ia_ech)) + 6.0))
+    ax2.grid(axis="y", linestyle="--", alpha=0.6)
+    ax2.legend()
+    ax2.bar_label(rects3, fmt="%.1f", padding=3, fontsize=9)
+    ax2.bar_label(rects4, fmt="%.1f", padding=3, fontsize=9)
+
     plt.tight_layout()
+    chemin_fig = os.path.join(OUTPUT_DIR, "3_comparaison_statique_vs_ollama.png")
+    plt.savefig(chemin_fig, dpi=300)
+    print(f"  [✅ Graphique sauvegardé dans : {chemin_fig}]")
     plt.show()
 
-# =======================================================================
-# LANCEMENT DES TESTS
-# =======================================================================
+
+# =============================================================================
+# POINT D'ENTRÉE PRINCIPAL
+# =============================================================================
 if __name__ == "__main__":
-    
-    NB_SIMULATIONS = 10
+    # Nombre de simulations par point pour lisser les courbes (ex: 30 à 50)
+    NB_SIMULATIONS_COURBES = 30
+    # Nombre de simulations pour le comparatif Ollama vs Statique (ex: 5 à 10)
+    NB_SIMULATIONS_OLLAMA = 5
+
     """
-    # Graphique 1 : Sondage Complet
+    # 1. Courbe avec Sondage Complet (100% de la population = 10 000)
     run_benchmark_courbes(
-        nb_simulations=NB_SIMULATIONS, 
-        pop_size=10000, 
-        taille_sondage=10000, 
-        titre="Évolution de la Satisfaction - Sondage Complet (100%)"
+        nb_simulations=NB_SIMULATIONS_COURBES,
+        pop_size=10000,
+        taille_sondage=10000,
+        titre="Score d'Utilité Sociale selon le % de Votants Stratégiques\n(Sondage Complet : 10 000 / 10 000)",
+        nom_fichier="1_courbes_sondage_complet.png"
     )
-    
-    # Graphique 2 : Sondage Biaisé
+
+    # 2. Courbe avec Sondage Biaisé (Échantillon restreint = 200 / 10 000)
     run_benchmark_courbes(
-        nb_simulations=NB_SIMULATIONS, 
-        pop_size=10000, 
-        taille_sondage=200, 
-        titre="Évolution de la Satisfaction - Sondage Restreint (200 / 10000)"
+        nb_simulations=NB_SIMULATIONS_COURBES,
+        pop_size=10000,
+        taille_sondage=200,
+        titre="Score d'Utilité Sociale selon le % de Votants Stratégiques\n(Sondage Biaisé : 200 / 10 000 électeurs)",
+        nom_fichier="2_courbes_sondage_biaise.png"
     )
     """
-    
-    # Graphique 3 : LLM vs SIMPL
-    # Assurez-vous d'avoir du temps devant vous pour celui-ci !
-    run_benchmark_llm_vs_statique()
+    # 3. Bar Chart : Échantillon de 100 agents Statiques vs 100 agents IA (Ollama) sur Pop=10 000
+    run_benchmark_statique_vs_ollama(
+        nb_simulations=NB_SIMULATIONS_OLLAMA,
+        pop_size=10000,
+        nb_agents_strat=2000,
+        taille_sondage=200
+    )

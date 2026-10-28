@@ -2,8 +2,10 @@
 agent.py - Définition de l'agent Électeur et de ses stratégies d'émission de bulletins.
 """
 
+import numpy as np
+
 # =============================================================================
-# CANDIDATS PAR DÉFAUT 
+# CANDIDATS PAR DÉFAUT
 # =============================================================================
 CANDIDATS = {0: "Bob", 1: "Raoul", 2: "Jackie", 3: "Mark", 4: "Francis"}
 
@@ -13,13 +15,6 @@ CANDIDATS = {0: "Bob", 1: "Raoul", 2: "Jackie", 3: "Mark", 4: "Francis"}
 # =============================================================================
 class Electeur:
     def __init__(self, id_electeur, utilities, faction="Inconnue", position=None):
-        """
-        Initialise un agent électeur.
-        :param id_electeur: Identifiant unique (int)
-        :param utilities: Dictionnaire {nom_candidat: score_utilite}
-        :param faction: Libellé de faction ou nom de cluster d'origine
-        :param position: Coordonnées 2D optionnelles (x, y) pour le modèle spatial
-        """
         self.id = id_electeur
         self.utilities = utilities
         self.faction = faction
@@ -33,9 +28,18 @@ class Electeur:
         """Renvoie la liste ordonnée des candidats par préférence décroissante."""
         return sorted(self.utilities, key=self.utilities.get, reverse=True)
 
-    def get_approbations(self, seuil=50):
-        """Renvoie la liste des candidats dont l'utilité atteint ou dépasse le seuil."""
-        approbations = [candidat for candidat, score in self.utilities.items() if score >= seuil]
+    def get_approbations(self, seuil=58):
+        """
+        En vote sincère par approbation, l'électeur approuve les candidats qu'il juge
+        vraiment satisfaisants (au-dessus d'un seuil d'exigence et de sa moyenne personnelle).
+        Cela permet d'approuver son favori ET un candidat de compromis proche (ex: Jackie).
+        """
+        moyenne_perso = float(np.mean(list(self.utilities.values())))
+        seuil_effectif = max(float(seuil), moyenne_perso + 4.0)
+        approbations = [
+            candidat for candidat, score in self.utilities.items()
+            if score >= seuil_effectif
+        ]
         if not approbations:
             approbations = [self.get_favori()]
         return approbations
@@ -48,15 +52,15 @@ class Electeur:
         """
         Plurality / FPTP
         - Sincère : vote pour le candidat favori.
-        - Stratégique (Compromis) : si le favori n'est pas dans les 2 leaders
-          du sondage, vote pour le préféré parmi les 2 leaders (vote utile).
+        - Stratégique (Vote utile sur le Top 2 du sondage) :
+          L'électeur regarde les 2 candidats en tête du sondage et vote pour celui
+          qu'il préfère parmi ces deux-là.
         """
         favori = self.get_favori()
         if not strategique or not sondage:
             return favori
 
         top_2 = sorted(sondage, key=sondage.get, reverse=True)[:2]
-
         if favori in top_2:
             return favori
 
@@ -67,15 +71,15 @@ class Electeur:
         """
         Two-Round Runoff Voting (1er tour)
         - Sincère : vote pour le favori.
-        - Stratégique : sécurise sa voix en votant pour le meilleur candidat
-          parmi les 3 plus grands prétendants au second tour.
+        - Stratégique (Vote utile de qualification parmi le Top 3) :
+          Sécurise la présence au second tour de son candidat préféré parmi les 3 premiers
+          du sondage (évite le vote perdu sur les petits candidats).
         """
         favori = self.get_favori()
         if not strategique or not sondage:
             return favori
 
         viables = sorted(sondage, key=sondage.get, reverse=True)[:3]
-
         if favori in viables:
             return favori
 
@@ -85,69 +89,61 @@ class Electeur:
         """
         Single Transferable Vote (STV)
         - Sincère : ordre de préférence réel décroissant.
-        - Stratégique (Burying conditionnel) :
-          Si le favori de l'électeur fait partie des deux favoris du sondage,
-          l'électeur relègue son concurrent direct en dernière position pour
-          éviter que des reports de voix ne le fassent passer devant.
-          Sinon, il vote sincèrement pour maximiser l'efficacité de ses reports de voix.
+        - Stratégique (Burying & Polarisation tactique) :
+          L'électeur place son candidat viable préféré du Top 3 en tête, et enterre (relègue
+          en fin de classement) à la fois le rival principal ET le candidat de compromis
+          susceptible de battre son camp aux transferts de voix.
         """
         classement_sincere = self.get_classement()
         if not strategique or not sondage:
             return classement_sincere
 
         favori = classement_sincere[0]
-        leaders = sorted(sondage, key=sondage.get, reverse=True)[:2]
+        top_3 = sorted(sondage, key=sondage.get, reverse=True)[:3]
+        leader_camp = favori if favori in top_3 else max(top_3, key=lambda c: self.utilities.get(c, 0))
 
-        if favori in leaders:
-            rival = leaders[1] if leaders[0] == favori else leaders[0]
-            bulletin = [c for c in classement_sincere if c != rival]
-            bulletin.append(rival)
-            return bulletin
+        # Enterre son 2e choix sincère (souvent le candidat centriste de compromis) et le leader adverse
+        deuxieme_sincere = classement_sincere[1]
+        rival_principal = top_3[0] if top_3[0] != leader_camp else top_3[1]
 
-        return classement_sincere
+        enterres = []
+        if deuxieme_sincere != leader_camp:
+            enterres.append(deuxieme_sincere)
+        if rival_principal not in enterres and rival_principal != leader_camp:
+            enterres.append(rival_principal)
 
-    def generer_bulletin_approbation(self, strategique=False, sondage=None, seuil_defaut=50):
+        milieu = [c for c in classement_sincere if c != leader_camp and c not in enterres]
+        return [leader_camp] + milieu + enterres
+
+    def generer_bulletin_approbation(self, strategique=False, sondage=None, seuil_defaut=58):
         """
         Approval Voting
-        - Sincère : approuve tout candidat dont l'utilité >= seuil_defaut.
-        - Stratégique (Leader Rule / Duel au sommet) :
-          Repère les 2 favoris du sondage (L1 et L2).
-          L'électeur approuve son leader préféré parmi les deux et tous les candidats
-          strictement meilleurs que ce leader, en excluant le rival de tête.
+        - Sincère : approuve tous les candidats au-dessus de son seuil d'acceptabilité (favorise le consensus).
+        - Stratégique (Bullet Voting / Troncature égoïste) :
+          Pour éviter qu'un candidat de compromis (2e choix) ne batte son favori ou le leader
+          de son camp, l'électeur stratégique pratique le Bullet Voting en n'approuvant qu'un
+          seul candidat (son favori s'il est dans le Top 3, sinon son préféré du Top 2).
         """
         if not strategique or not sondage:
             return self.get_approbations(seuil=seuil_defaut)
 
-        leaders = sorted(sondage, key=sondage.get, reverse=True)[:2]
-        cand_a, cand_b = leaders[0], leaders[1]
+        favori = self.get_favori()
+        top_3 = sorted(sondage, key=sondage.get, reverse=True)[:3]
 
-        if self.utilities.get(cand_a, 0) >= self.utilities.get(cand_b, 0):
-            leader_prefere = cand_a
-            rival_craint = cand_b
-        else:
-            leader_prefere = cand_b
-            rival_craint = cand_a
+        if favori in top_3:
+            # Bullet voting pur : retire l'approbation au candidat centriste de compromis !
+            return [favori]
 
-        seuil_strategique = self.utilities.get(leader_prefere, 0)
-
-        approbations = [
-            c for c, u in self.utilities.items()
-            if u >= seuil_strategique and c != rival_craint
-        ]
-
-        if not approbations:
-            approbations = [leader_prefere]
-
-        return approbations
+        top_2 = top_3[:2]
+        choix_utile = max(top_2, key=lambda c: self.utilities.get(c, 0))
+        return [favori, choix_utile]
 
 
 # =============================================================================
 # AIGUILLAGE DU BULLETIN STATIQUE
 # =============================================================================
-def generer_bulletin_statique(electeur, systeme_vote, strategique=False, sondage=None, seuil_appr=50):
-    """
-    Aiguille l'électeur vers la bonne méthode d'émission selon le nom du scrutin.
-    """
+def generer_bulletin_statique(electeur, systeme_vote, strategique=False, sondage=None, seuil_appr=58):
+    """Aiguille l'électeur vers la bonne méthode d'émission selon le nom du scrutin."""
     if "Plurality" in systeme_vote:
         return electeur.generer_bulletin_pluralite(strategique=strategique, sondage=sondage)
     elif "Two-Round" in systeme_vote:
@@ -157,5 +153,4 @@ def generer_bulletin_statique(electeur, systeme_vote, strategique=False, sondage
     elif "Approval" in systeme_vote:
         return electeur.generer_bulletin_approbation(strategique=strategique, sondage=sondage, seuil_defaut=seuil_appr)
     else:
-        # Repli par défaut sur le favori sincère
         return electeur.get_favori()
