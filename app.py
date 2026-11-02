@@ -256,11 +256,13 @@ def executer_scrutin_individuel(systeme_nom, pop, candidats, taux_strat, sondage
 
 def lancer_simulation_complete(pop, candidats, seuil_appr=50):
     """Exécute les 5 cas sur les 4 systèmes de vote."""
-    s_complet = st.session_state.get("sondage_complet") or generer_sondage(pop, candidats, taille_echantillon=len(pop))
-    s_biaise = st.session_state.get("sondage_biaise") or generer_sondage(pop, candidats, taille_echantillon=max(15, int(len(pop) * 0.05)))
-
-    st.session_state.sondage_complet = s_complet
-    st.session_state.sondage_biaise = s_biaise
+    s_complet = st.session_state.get("sondage_complet")
+    s_biaise = st.session_state.get("sondage_biaise")
+    if s_complet is None or s_biaise is None:
+        raise ValueError(
+            "Les sondages complet et biaisé doivent être calculés dans l'onglet "
+            "'2. Inspection & Sondages' avant de lancer la simulation complète."
+        )
 
     cand_opt, sw_opt, _ = calculer_optimum_social(pop, candidats)
     n_pop = len(pop)
@@ -912,10 +914,15 @@ elif page == "3. Simulation":
         *1. Sincère | 2. 100% Strat. Complet | 3. 100% Strat. Biaisé | 4. 50% Strat. Complet | 5. 50% Strat. Biaisé*
         """)
         if st.button("Lancer la Simulation Complète (Tous les cas)", type="primary"):
-            with st.spinner("Exécution des simulations en cours..."):
-                df_res = lancer_simulation_complete(pop, candidats)
-            st.success("Simulation complète terminée ! Consultez l'onglet '4. Résultats & Audit'.")
-            st.dataframe(df_res.head(8), use_container_width=True)
+            if st.session_state.sondage_complet is None or st.session_state.sondage_biaise is None:
+                st.error(
+                    "Calculez d'abord les sondages complet et biaisé dans l'onglet "
+                    "'2. Inspection & Sondages'."
+                )
+            else:
+                with st.spinner("Exécution des simulations en cours..."):
+                    lancer_simulation_complete(pop, candidats)
+                st.success("Simulation complète terminée ! Consultez l'onglet '4. Résultats & Audit'.")
 
         st.markdown("---")
 
@@ -924,18 +931,22 @@ elif page == "3. Simulation":
 
         with col_sond:
             st.markdown("**1. Information Électorale Prise en Compte**")
-            mode_sondage = st.radio("Sondage actif :", ["Complet (100% de la pop)", "Biaisé / Échantillon réduit"])
-            if st.button("Actualiser ce sondage"):
-                if "Complet" in mode_sondage:
-                    sond = generer_sondage(pop, candidats, taille_echantillon=len(pop))
-                    st.session_state.sondage_complet = sond
-                else:
-                    taille = max(15, int(len(pop) * 0.05))
-                    sond = generer_sondage(pop, candidats, taille_echantillon=taille)
-                    st.session_state.sondage_biaise = sond
-                st.session_state.sondage_actif = sond
+            mode_sondage = st.radio(
+                "Sondage actif :",
+                ["Complet (100% de la pop)", "Biaisé / Échantillon réduit"],
+                key="mode_sondage_simulation"
+            )
+            sondage_selectionne = st.session_state.get(
+                "sondage_complet" if "Complet" in mode_sondage else "sondage_biaise"
+            )
+            if sondage_selectionne is not None:
                 st.write("Résultats du sondage (Intentions 1er choix) :")
-                st.json(sond)
+                st.json(sondage_selectionne)
+            else:
+                st.info(
+                    "Ce sondage n'est pas encore disponible. Calculez-le dans l'onglet "
+                    "'2. Inspection & Sondages'."
+                )
 
         with col_scrutin:
             st.markdown("**2. Paramètres du Scrutin Spécifique**")
@@ -1012,9 +1023,6 @@ elif page == "4. Résultats & Audit":
             pivot_loss = df.pivot(index="Cas", columns="Système", values="Perte (%)").reindex(
                 index=ORDRE_CAS, columns=ORDRE_SYSTEMES
             ).astype(float)
-            pivot_regret = df.pivot(index="Cas", columns="Système", values="Regret Moyen").reindex(
-                index=ORDRE_CAS, columns=ORDRE_SYSTEMES
-            ).astype(float)
             pivot_sw_moyen = df.pivot(index="Cas", columns="Système", values="Bien-être Social Moyen").reindex(
                 index=ORDRE_CAS, columns=ORDRE_SYSTEMES
             )
@@ -1030,25 +1038,6 @@ elif page == "4. Résultats & Audit":
                     pivot_loss.style.format("{:.2f}%").background_gradient(
                         cmap="Reds", vmin=0.0, vmax=max_loss
                     ),
-                    use_container_width=True
-                )
-
-            st.markdown("---")
-            st.subheader("Indicateurs d'Injustice et d'Inégalité")
-            col_reg, col_gini = st.columns(2)
-            with col_reg:
-                st.markdown("**Regret Individuel Moyen (pts d'utilité perdus)**")
-                st.dataframe(
-                    pivot_regret.style.format("{:.2f}").background_gradient(cmap="Oranges"),
-                    use_container_width=True
-                )
-            with col_gini:
-                st.markdown("**Inégalité / Frustration ($sigma$ des utilités)**")
-                pivot_std = df.pivot(index="Cas", columns="Système", values="Inégalité (σ)").reindex(
-                    index=ORDRE_CAS, columns=ORDRE_SYSTEMES
-                ).astype(float)
-                st.dataframe(
-                    pivot_std.style.format("{:.2f}").background_gradient(cmap="Blues"),
                     use_container_width=True
                 )
 
@@ -1085,7 +1074,7 @@ elif page == "4. Résultats & Audit":
 
                 st.markdown("**Synthèse des Scénarios**")
                 st.dataframe(
-                    df_sys[["Vainqueur", "Bien-être Social Moyen", "Perte (%)", "Regret Moyen", "Inégalité (σ)", "Optimal ?"]],
+                    df_sys[["Vainqueur", "Bien-être Social Moyen", "Optimal ?"]],
                     use_container_width=True
                 )
 
